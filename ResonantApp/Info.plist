@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDisplayName</key>
+    <string>Resonant Feasibility Spike</string>
+    <key>CFBundleExecutable</key>
+    <string>Resonant</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.resonant.FeasibilitySpike</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>Resonant</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.2</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Resonant reads the track currently playing in Music so it can show its title and playback state. It does not sign in to Apple Music.</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Resonant analyzes permitted Music output in memory to test whether it can drive a visualizer. It does not record or upload audio.</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+</dict>
+</plist>

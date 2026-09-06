@@ -1,0 +1,14 @@
+# Generated Swift builds, local IDE state, and macOS files
+.build/
+.swiftpm/
+.DS_Store
+*.xcuserstate
+xcuserdata/
+
+# Local credentials and diagnostic exports
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+resonant-diagnostic-report*.json
