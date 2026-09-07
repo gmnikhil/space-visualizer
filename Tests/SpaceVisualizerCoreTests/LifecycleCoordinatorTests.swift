@@ -159,7 +159,10 @@ final class LifecycleCoordinatorTests: XCTestCase {
     func testIdleChecksUseOneFiveSecondIntervalWithoutCatchUpOrOverlap() {
         let harness = LifecycleHarness()
         harness.startFollowing()
-        XCTAssertEqual(harness.scheduler.scheduledDelays, [5_000_000_000])
+        XCTAssertEqual(harness.scheduler.scheduledDelays, [
+            5_000_000_000,
+            SpaceVisualizerLifecycleCoordinator.playbackQueryTimeoutNanoseconds
+        ])
 
         harness.query.complete(.success(.paused))
         harness.scheduler.advance(by: 4_999_999_999)
@@ -176,6 +179,95 @@ final class LifecycleCoordinatorTests: XCTestCase {
         harness.scheduler.advance(by: 5_000_000_000)
         XCTAssertEqual(harness.query.queryCount, 3)
         XCTAssertEqual(harness.scheduler.scheduledDelays.filter { $0 == 5_000_000_000 }.count, 1)
+    }
+
+    func testStalledIdleQueryTimesOutAndNextPollRecoversDespiteLateCallback() {
+        let harness = LifecycleHarness()
+        harness.startFollowing()
+        let expiredToken = harness.query.tokens[0]
+
+        harness.scheduler.advance(by: SpaceVisualizerLifecycleCoordinator.playbackQueryTimeoutNanoseconds)
+        XCTAssertTrue(expiredToken.isCancelled)
+        XCTAssertFalse(harness.coordinator.isQueryInFlight)
+        XCTAssertEqual(harness.coordinator.state, .waiting)
+        XCTAssertEqual(harness.coordinator.message, "Music playback check timed out.")
+        XCTAssertEqual(harness.scheduler.activeHandleCount, 1)
+
+        harness.scheduler.advance(to: 5_000_000_000)
+        XCTAssertEqual(harness.query.queryCount, 2)
+        XCTAssertTrue(harness.coordinator.isQueryInFlight)
+
+        // The expired provider responds after its replacement has started.
+        harness.query.complete(.denied("Obsolete permission error"))
+        XCTAssertEqual(harness.coordinator.state, .waiting)
+        XCTAssertTrue(harness.coordinator.isQueryInFlight)
+        harness.query.complete(.success(.playing))
+        harness.factory.completeSuccess()
+        harness.coordinator.receiveAudio(.fixtureLive.withGeneration(harness.coordinator.generation))
+        XCTAssertEqual(harness.coordinator.state, .visualizing)
+        XCTAssertFalse(harness.coordinator.isQueryInFlight)
+    }
+
+    func testStalledActiveQueryReturnsToPollingAndRecovers() {
+        let harness = LifecycleHarness()
+        harness.startFollowing()
+        harness.query.complete(.success(.playing))
+        harness.factory.completeSuccess()
+        harness.coordinator.receiveAudio(.fixtureLive.withGeneration(harness.coordinator.generation))
+        harness.scheduler.advance(by: 2_000_000_000)
+
+        harness.scheduler.advance(by: SpaceVisualizerLifecycleCoordinator.playbackQueryTimeoutNanoseconds)
+        XCTAssertEqual(harness.coordinator.state, .waiting)
+        XCTAssertTrue(harness.query.tokens[1].isCancelled)
+        XCTAssertFalse(harness.coordinator.isQueryInFlight)
+        XCTAssertEqual(harness.coordinator.activeSessionCount, 0)
+        XCTAssertTrue(harness.coordinator.hasIdleTimer)
+
+        harness.query.complete(.success(.paused)) // Obsolete result.
+        harness.scheduler.advance(by: 5_000_000_000)
+        harness.query.complete(.success(.playing))
+        harness.factory.completeSuccess()
+        harness.coordinator.receiveAudio(.fixtureLive.withGeneration(harness.coordinator.generation))
+        XCTAssertEqual(harness.coordinator.state, .visualizing)
+        XCTAssertEqual(harness.factory.creationCount, 2)
+    }
+
+    func testTimeoutRetiresQueryBeforeSynchronousCancellationCallback() {
+        let harness = LifecycleHarness()
+        harness.startFollowing()
+        harness.query.tokens[0].addCancellationHandler {
+            harness.query.complete(.success(.playing))
+        }
+
+        harness.scheduler.advance(by: SpaceVisualizerLifecycleCoordinator.playbackQueryTimeoutNanoseconds)
+        XCTAssertEqual(harness.coordinator.state, .waiting)
+        XCTAssertFalse(harness.coordinator.isQueryInFlight)
+        XCTAssertEqual(harness.factory.creationCount, 0)
+        XCTAssertEqual(harness.coordinator.message, "Music playback check timed out.")
+    }
+
+    func testCompletedQueryCancelsItsDeadline() {
+        let harness = LifecycleHarness()
+        harness.startFollowing()
+        harness.query.complete(.success(.paused))
+        XCTAssertEqual(harness.scheduler.activeHandleCount, 1)
+        harness.scheduler.advance(by: SpaceVisualizerLifecycleCoordinator.playbackQueryTimeoutNanoseconds)
+        XCTAssertEqual(harness.coordinator.playback?.state, .paused)
+        XCTAssertFalse(harness.coordinator.message.contains("timed out"))
+        XCTAssertEqual(harness.query.queryCount, 1)
+    }
+
+    func testClosingWindowCancelsQueryDeadlineAndIgnoresLateResult() {
+        let harness = LifecycleHarness()
+        harness.startFollowing()
+        harness.coordinator.closeWindow()
+        XCTAssertTrue(harness.query.tokens[0].isCancelled)
+        XCTAssertEqual(harness.scheduler.activeHandleCount, 0)
+        harness.scheduler.advance(by: 10_000_000_000)
+        harness.query.complete(.success(.playing))
+        XCTAssertEqual(harness.coordinator.state, .suspended)
+        XCTAssertFalse(harness.coordinator.isQueryInFlight)
+        XCTAssertEqual(harness.factory.creationCount, 0)
     }
 
     func testRepeatedAudioFramesUseLatestMailboxWithoutRepeatingStatusUpdates() {
@@ -217,7 +309,8 @@ final class LifecycleCoordinatorTests: XCTestCase {
 
         XCTAssertFalse(harness.coordinator.hasIdleTimer)
         XCTAssertTrue(harness.coordinator.hasActiveWatchdog)
-        XCTAssertEqual(harness.scheduler.scheduledDelays.filter { $0 == 2_000_000_000 }.count, 1)
+        // The initial query deadline is canceled; only the watchdog remains.
+        XCTAssertEqual(harness.scheduler.activeHandleCount, 1)
 
         harness.query.complete(.success(.playing))
         XCTAssertEqual(harness.factory.creationCount, 1)
@@ -369,6 +462,7 @@ private final class LifecyclePermissionFake: LifecyclePermissionProviding {
 private final class LifecyclePlaybackQueryFake: PlaybackStateQuerying {
     private(set) var queryCount = 0
     private(set) var inFlightCount = 0
+    private(set) var tokens: [LifecycleCancellationToken] = []
     private var completions: [(PlaybackQueryResult) -> Void] = []
 
     @discardableResult
@@ -376,7 +470,9 @@ private final class LifecyclePlaybackQueryFake: PlaybackStateQuerying {
         queryCount += 1
         inFlightCount += 1
         completions.append(completion)
-        return LifecycleCancellationToken()
+        let token = LifecycleCancellationToken()
+        tokens.append(token)
+        return token
     }
 
     func complete(_ result: PlaybackQueryResult) {

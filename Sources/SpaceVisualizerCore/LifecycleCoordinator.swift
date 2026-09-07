@@ -407,6 +407,9 @@ public struct LifecyclePresentation: Equatable, Sendable {
 public final class SpaceVisualizerLifecycleCoordinator {
     public static let idleIntervalNanoseconds: UInt64 = 5_000_000_000
     public static let activeWatchdogIntervalNanoseconds: UInt64 = 2_000_000_000
+    /// End-to-end deadline, including provider queueing and helper launch.
+    /// Allows headroom beyond the Music helper's one-second execution timeout.
+    public static let playbackQueryTimeoutNanoseconds: UInt64 = 2_000_000_000
 
     public private(set) var state: SpaceVisualizerLifecycleState = .onboarding
     public private(set) var generation: UInt64 = 0
@@ -436,6 +439,7 @@ public final class SpaceVisualizerLifecycleCoordinator {
     private var idleTimer: LifecycleCancellationToken?
     private var activeWatchdog: LifecycleCancellationToken?
     private var queryToken: LifecycleCancellationToken?
+    private var queryDeadline: LifecycleCancellationToken?
     private var queryInFlight = false
     private var queryID: UInt64 = 0
     private var queryGeneration: UInt64 = 0
@@ -710,6 +714,22 @@ public final class SpaceVisualizerLifecycleCoordinator {
         let requestStartedAt = Date()
         queryGeneration = requestGeneration
         queryInFlight = true
+        queryDeadline = scheduler.schedule(after: Self.playbackQueryTimeoutNanoseconds, repeating: nil) { [weak self] in
+            self?.onLifecycleQueue {
+                guard let self, self.queryInFlight,
+                      self.queryID == requestID, self.queryGeneration == requestGeneration else { return }
+                let expiredToken = self.queryToken
+                // Retire the request before cancellation, which may synchronously
+                // deliver a callback. Late results cannot affect a later query.
+                self.finishPlaybackQuery(
+                    id: requestID,
+                    generation: requestGeneration,
+                    positionObservedAt: requestStartedAt,
+                    result: .timedOut
+                )
+                expiredToken?.cancel()
+            }
+        }
         var callbackReturned = false
         let token = playbackQuery.query { [weak self] result in
             self?.onLifecycleQueue {
@@ -738,6 +758,8 @@ public final class SpaceVisualizerLifecycleCoordinator {
         guard queryInFlight, id == queryID else { return }
         queryInFlight = false
         queryToken = nil
+        queryDeadline?.cancel()
+        queryDeadline = nil
         (permissions as? LifecyclePermissionOutcomeRecording)?.recordPlaybackQueryResult(result)
         let shouldRunHint = pendingNotificationHint
         pendingNotificationHint = false
@@ -976,10 +998,13 @@ public final class SpaceVisualizerLifecycleCoordinator {
         idleTimer = nil
         activeWatchdog?.cancel()
         activeWatchdog = nil
-        queryToken?.cancel()
+        queryDeadline?.cancel()
+        queryDeadline = nil
+        let canceledQuery = queryToken
         queryToken = nil
         queryInFlight = false
         queryID &+= 1
+        canceledQuery?.cancel()
         pendingNotificationHint = false
         startToken?.cancel()
         startToken = nil
