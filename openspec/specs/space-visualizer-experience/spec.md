@@ -26,7 +26,7 @@ The primary experience SHALL use the available window canvas for the existing au
 
 ### Requirement: Preserve truthful signal and source-quality status
 
-Visual movement SHALL derive from fresh measured audio, not track time or invented beats. Status SHALL distinguish waiting, starting, live, silence, unavailable input, and permission errors. Measured capture format SHALL remain distinct from source codec or quality; the app SHALL NOT infer Lossless, Hi-Res Lossless, 24-bit source precision, or Dolby Atmos from PCM format alone.
+Visual movement SHALL derive from fresh measured audio, not track time or invented beats. Status SHALL distinguish waiting, starting, live, silence, unavailable input, playback uncertainty, lost-connection recovery, and permission errors. Measured capture format SHALL remain distinct from source codec or quality; the app SHALL NOT infer Lossless, Hi-Res Lossless, 24-bit source precision, or Dolby Atmos from PCM format alone.
 
 #### Scenario: Captured PCM is 192 kHz Float32
 - **WHEN** the audio tap exposes that format but Music does not expose the active source-quality badge
@@ -35,6 +35,34 @@ Visual movement SHALL derive from fresh measured audio, not track time or invent
 #### Scenario: Audio stops arriving
 - **WHEN** a previously live stream ceases delivering fresh input
 - **THEN** audio-driven visual movement settles within 250 ms of the last usable input, rather than continuing to display stale motion as live
+
+### Requirement: Keep the displayed track position truthful during observation failures
+
+When Music is reported playing and a valid position is available, the app MAY advance the displayed position locally between successful observations, bounded by a valid track duration. On the first failed playback check it SHALL freeze the displayed position at its current extrapolated value and remove the advancing time anchor, rather than continuing to imply confirmed playback or rewinding to the previous poll's position. Repeated failures SHALL NOT advance the frozen position. A successful observation SHALL replace it with Music's newly reported position; missing metadata SHALL NOT be fabricated or carried forward as current. Displayed position SHALL NOT drive capture, playback state, or audio visualization.
+
+#### Scenario: First playback check fails
+- **WHEN** the app has an advancing track position and a playback query fails
+- **THEN** the timestamp freezes at the extrapolated position, clamped to available duration, and the status identifies playback as uncertain with the current failure count
+
+#### Scenario: Audio continues while playback state is uncertain
+- **WHEN** fresh audio continues arriving after a failed playback check
+- **THEN** the scene may continue responding to that audio, but the frozen timestamp and playback-uncertainty message remain until a query succeeds
+
+#### Scenario: Observation reaches the failure threshold
+- **WHEN** three consecutive playback checks fail
+- **THEN** the app shows “Lost connection to Music. Retrying every five seconds…” instead of asserting that Music has paused, and any retained track position remains frozen during recovery polling
+
+#### Scenario: A successful observation restores position
+- **WHEN** a query succeeds with playing state and a valid position
+- **THEN** the app clears uncertainty, displays Music's newly reported position, and resumes local position advancement from the new observation
+
+#### Scenario: State-only recovery has no track details
+- **WHEN** the state-only fallback successfully reports playback without metadata
+- **THEN** the app may resume visualization but SHALL NOT display the previous track's metadata or timestamp as current
+
+#### Scenario: Pause is confirmed
+- **WHEN** a successful query reports Music paused
+- **THEN** the app stops extrapolating position and shows the waiting presentation, hiding the live track details and timestamp rather than displaying an advancing clock
 
 ### Requirement: Render at the available display cadence without queueing history
 
