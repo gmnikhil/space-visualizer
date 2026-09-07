@@ -97,6 +97,14 @@ public final class MusicPlaybackQueryAdapter: PlaybackStateQuerying {
     end tell
     """#
 
+    /// Recovery query deliberately avoids every current-track property. A
+    /// descriptor/serialization failure in metadata must not gate playback.
+    public static let stateOnlyScript = #"""
+    tell application id "com.apple.Music"
+        return (player state as text)
+    end tell
+    """#
+
     private let presence: MusicProcessPresenceChecking
     private let runner: BoundedAppleScriptRunning
     private let queue: DispatchQueue
@@ -130,12 +138,45 @@ public final class MusicPlaybackQueryAdapter: PlaybackStateQuerying {
             let runnerToken = self.runner.run(fixedScript: Self.fixedScript, timeout: Self.timeout) { result in
                 self.queue.async {
                     guard !token.isCancelled else { return }
-                    gate.complete(Self.map(result))
+                    let mapped = Self.map(result)
+                    if case .failed = mapped {
+                        self.queryStateOnly(token: token, gate: gate)
+                    } else {
+                        gate.complete(mapped)
+                    }
                 }
             }
             token.addCancellationHandler { runnerToken.cancel() }
         }
         return token
+    }
+
+    private func queryStateOnly(token: LifecycleCancellationToken, gate: CompletionGate) {
+        guard !token.isCancelled else { return }
+        // Music may have quit since the metadata request. Do not relaunch it.
+        guard presence.isMusicRunning() else {
+            gate.complete(.success(PlaybackObservation(state: .stopped, isPlayerAvailable: false)))
+            return
+        }
+        // One bounded fallback only, with headroom inside the coordinator's
+        // two-second end-to-end deadline. No retry on denial or cancellation.
+        let runnerToken = runner.run(fixedScript: Self.stateOnlyScript, timeout: 0.5) { result in
+            self.queue.async {
+                guard !token.isCancelled else { return }
+                switch result {
+                case let .success(output):
+                    let state = Self.playbackState(output)
+                    guard state != .unknown else {
+                        gate.complete(.failed("Music returned an unreadable playback state, even without track metadata."))
+                        return
+                    }
+                    gate.complete(.success(PlaybackObservation(state: state)))
+                case .failure:
+                    gate.complete(Self.map(result))
+                }
+            }
+        }
+        token.addCancellationHandler { runnerToken.cancel() }
     }
 
     private static func map(_ result: Result<String, AppleScriptRunnerError>) -> PlaybackQueryResult {
@@ -159,7 +200,7 @@ public final class MusicPlaybackQueryAdapter: PlaybackStateQuerying {
     private static func parse(_ output: String) -> PlaybackObservation? {
         let response = output.trimmingCharacters(in: .newlines)
         let values = response.components(separatedBy: fieldSeparator)
-        guard values.count == 7 else { return nil }
+        guard values.count == 7, playbackState(values[0]) != .unknown else { return nil }
 
         let raw = RawMusicSnapshot(
             title: emptyToNil(values[1]),

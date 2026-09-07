@@ -250,6 +250,21 @@ public struct PlaybackObservation: Equatable, Sendable {
     public var isPlaying: Bool {
         isPlayerAvailable && state == .playing
     }
+
+    /// Preserve the extrapolated display position, then remove its advancing
+    /// anchor. Repeated failures must not advance it or rewind to the last poll.
+    mutating func freezePosition(at now: Date) {
+        guard let observedAt = positionObservedAt else { return }
+        if isPlaying, var position = track?.position, position.isFinite, position >= 0 {
+            let elapsed = now.timeIntervalSince(observedAt)
+            if elapsed.isFinite, elapsed > 0 { position += elapsed }
+            if let duration = track?.duration, duration.isFinite, duration >= 0 {
+                position = min(position, duration)
+            }
+            track?.position = position
+        }
+        positionObservedAt = nil
+    }
 }
 
 public enum PlaybackQueryResult: Equatable, Sendable {
@@ -410,6 +425,7 @@ public final class SpaceVisualizerLifecycleCoordinator {
     /// End-to-end deadline, including provider queueing and helper launch.
     /// Allows headroom beyond the Music helper's one-second execution timeout.
     public static let playbackQueryTimeoutNanoseconds: UInt64 = 2_000_000_000
+    public static let playbackFailureThreshold = 3
 
     public private(set) var state: SpaceVisualizerLifecycleState = .onboarding
     public private(set) var generation: UInt64 = 0
@@ -444,6 +460,8 @@ public final class SpaceVisualizerLifecycleCoordinator {
     private var queryID: UInt64 = 0
     private var queryGeneration: UInt64 = 0
     private var pendingNotificationHint = false
+    public private(set) var consecutivePlaybackFailures = 0
+    private var lastPlaybackFailure: String?
     private var startToken: LifecycleCancellationToken?
     private var startInFlight = false
     private var activeResources: VisualizerSessionResources?
@@ -642,6 +660,7 @@ public final class SpaceVisualizerLifecycleCoordinator {
             state = .visualizing
             message = "Live signal available."
         }
+        if consecutivePlaybackFailures > 0 { message = playbackFailureMessage }
     }
 
     private func handleExpiredAudioInput() {
@@ -663,6 +682,8 @@ public final class SpaceVisualizerLifecycleCoordinator {
     private func enterWaiting(runInitialCheck: Bool) {
         guard state != .terminated else { return }
         cancelRuntime(invalidateGeneration: true)
+        consecutivePlaybackFailures = 0
+        lastPlaybackFailure = nil
         guard isWindowVisible, consentIntent, permissions.permissions.canAttemptAfterUserConsent else {
             state = .suspended
             message = "Automatic following is enabled; open the window to begin."
@@ -769,9 +790,17 @@ public final class SpaceVisualizerLifecycleCoordinator {
 
         switch result {
         case let .success(observation):
+            let wasUncertain = consecutivePlaybackFailures > 0
+            consecutivePlaybackFailures = 0
+            lastPlaybackFailure = nil
             var observedPlayback = observation
             observedPlayback.positionObservedAt = positionObservedAt
             playback = observedPlayback
+            if wasUncertain, observedPlayback.isPlaying, isActiveObservation {
+                message = hasReceivedFreshInput
+                    ? (state == .silent ? "Music is playing, but the latest audio is quiet." : "Live signal available.")
+                    : "Music is playing. Waiting for fresh audio."
+            }
             handlePlayback(observedPlayback)
         case let .denied(reason):
             cancelRuntime(invalidateGeneration: true)
@@ -790,14 +819,30 @@ public final class SpaceVisualizerLifecycleCoordinator {
         }
     }
 
-    private func handleQueryFailure(_ reason: String) {
-        guard isActiveObservation else {
-            state = .waiting
-            message = reason
-            scheduleIdleTimer()
-            return
+    private var playbackFailureMessage: String {
+        if consecutivePlaybackFailures >= Self.playbackFailureThreshold {
+            return "Lost connection to Music. Retrying every five seconds…"
         }
-        returnToWaiting(message: reason)
+        return "Playback uncertain (\(consecutivePlaybackFailures)/\(Self.playbackFailureThreshold)). \(lastPlaybackFailure ?? "Checking again.")"
+    }
+
+    private func handleQueryFailure(_ reason: String) {
+        consecutivePlaybackFailures = min(consecutivePlaybackFailures + 1, Self.playbackFailureThreshold)
+        lastPlaybackFailure = reason
+        playback?.freezePosition(at: Date())
+        if isActiveObservation {
+            if consecutivePlaybackFailures >= Self.playbackFailureThreshold {
+                returnToWaiting(message: playbackFailureMessage)
+            } else {
+                // Keep the existing capture and watchdog through transient
+                // observation failures. PCM is not proof of playback state.
+                message = playbackFailureMessage
+            }
+        } else {
+            state = .waiting
+            message = playbackFailureMessage
+            scheduleIdleTimer()
+        }
     }
 
     private func handlePlayback(_ observation: PlaybackObservation) {

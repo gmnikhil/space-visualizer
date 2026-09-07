@@ -190,7 +190,8 @@ final class LifecycleCoordinatorTests: XCTestCase {
         XCTAssertTrue(expiredToken.isCancelled)
         XCTAssertFalse(harness.coordinator.isQueryInFlight)
         XCTAssertEqual(harness.coordinator.state, .waiting)
-        XCTAssertEqual(harness.coordinator.message, "Music playback check timed out.")
+        XCTAssertTrue(harness.coordinator.message.contains("Music playback check timed out."))
+        XCTAssertEqual(harness.coordinator.consecutivePlaybackFailures, 1)
         XCTAssertEqual(harness.scheduler.activeHandleCount, 1)
 
         harness.scheduler.advance(to: 5_000_000_000)
@@ -208,28 +209,40 @@ final class LifecycleCoordinatorTests: XCTestCase {
         XCTAssertFalse(harness.coordinator.isQueryInFlight)
     }
 
-    func testStalledActiveQueryReturnsToPollingAndRecovers() {
+    func testThreeStalledActiveQueriesReturnToPollingAndRecover() {
         let harness = LifecycleHarness()
         harness.startFollowing()
         harness.query.complete(.success(.playing))
         harness.factory.completeSuccess()
         harness.coordinator.receiveAudio(.fixtureLive.withGeneration(harness.coordinator.generation))
-        harness.scheduler.advance(by: 2_000_000_000)
 
-        harness.scheduler.advance(by: SpaceVisualizerLifecycleCoordinator.playbackQueryTimeoutNanoseconds)
+        for failure in 1...3 {
+            harness.scheduler.advance(by: 2_000_000_000)
+            harness.scheduler.advance(by: SpaceVisualizerLifecycleCoordinator.playbackQueryTimeoutNanoseconds)
+            XCTAssertTrue(harness.query.tokens[failure].isCancelled)
+            XCTAssertFalse(harness.coordinator.isQueryInFlight)
+            XCTAssertEqual(harness.coordinator.consecutivePlaybackFailures, failure)
+            XCTAssertEqual(harness.coordinator.activeSessionCount, failure < 3 ? 1 : 0)
+            harness.query.complete(.success(.paused)) // Obsolete result must not reset the counter.
+            XCTAssertEqual(harness.coordinator.consecutivePlaybackFailures, failure)
+        }
         XCTAssertEqual(harness.coordinator.state, .waiting)
-        XCTAssertTrue(harness.query.tokens[1].isCancelled)
-        XCTAssertFalse(harness.coordinator.isQueryInFlight)
-        XCTAssertEqual(harness.coordinator.activeSessionCount, 0)
         XCTAssertTrue(harness.coordinator.hasIdleTimer)
+        XCTAssertFalse(harness.coordinator.hasActiveWatchdog)
+        XCTAssertEqual(harness.coordinator.message, "Lost connection to Music. Retrying every five seconds…")
 
-        harness.query.complete(.success(.paused)) // Obsolete result.
+        // Repeated failures in recovery never disable the idle poll.
+        harness.scheduler.advance(by: 5_000_000_000)
+        harness.query.complete(.failed("Still unavailable"))
+        XCTAssertTrue(harness.coordinator.hasIdleTimer)
+        XCTAssertEqual(harness.coordinator.consecutivePlaybackFailures, 3)
         harness.scheduler.advance(by: 5_000_000_000)
         harness.query.complete(.success(.playing))
         harness.factory.completeSuccess()
         harness.coordinator.receiveAudio(.fixtureLive.withGeneration(harness.coordinator.generation))
         XCTAssertEqual(harness.coordinator.state, .visualizing)
         XCTAssertEqual(harness.factory.creationCount, 2)
+        XCTAssertEqual(harness.coordinator.consecutivePlaybackFailures, 0)
     }
 
     func testTimeoutRetiresQueryBeforeSynchronousCancellationCallback() {
@@ -243,7 +256,7 @@ final class LifecycleCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.coordinator.state, .waiting)
         XCTAssertFalse(harness.coordinator.isQueryInFlight)
         XCTAssertEqual(harness.factory.creationCount, 0)
-        XCTAssertEqual(harness.coordinator.message, "Music playback check timed out.")
+        XCTAssertTrue(harness.coordinator.message.contains("Music playback check timed out."))
     }
 
     func testCompletedQueryCancelsItsDeadline() {
@@ -268,6 +281,94 @@ final class LifecycleCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.coordinator.state, .suspended)
         XCTAssertFalse(harness.coordinator.isQueryInFlight)
         XCTAssertEqual(harness.factory.creationCount, 0)
+    }
+
+    func testFirstFailureFreezesPositionAndSuccessResetsFailureStreak() {
+        let harness = LifecycleHarness()
+        harness.startFollowing()
+        harness.query.complete(.success(PlaybackObservation(
+            state: .playing, track: TrackSnapshot(playbackState: .playing, position: 30, duration: 180)
+        )))
+        harness.factory.completeSuccess()
+        harness.coordinator.receiveAudio(.fixtureLive.withGeneration(harness.coordinator.generation))
+
+        harness.scheduler.advance(by: 2_000_000_000)
+        harness.query.complete(.failed("Descriptor error"))
+        let frozenPosition = harness.coordinator.playback?.track?.position
+        XCTAssertNotNil(frozenPosition)
+        XCTAssertNil(harness.coordinator.playback?.positionObservedAt)
+        XCTAssertEqual(harness.coordinator.activeSessionCount, 1)
+        harness.coordinator.receiveAudio(.fixtureLive.withGeneration(harness.coordinator.generation))
+        XCTAssertTrue(harness.coordinator.message.contains("Playback uncertain (1/3)"))
+
+        harness.scheduler.advance(by: 2_000_000_000)
+        harness.query.complete(.failed("Malformed response"))
+        XCTAssertEqual(harness.coordinator.playback?.track?.position, frozenPosition)
+        XCTAssertEqual(harness.coordinator.consecutivePlaybackFailures, 2)
+        XCTAssertEqual(harness.capture.destroyCount, 0)
+
+        harness.scheduler.advance(by: 2_000_000_000)
+        harness.query.complete(.success(PlaybackObservation(
+            state: .playing, track: TrackSnapshot(playbackState: .playing, position: 42, duration: 180)
+        )))
+        XCTAssertEqual(harness.coordinator.playback?.track?.position, 42)
+        XCTAssertNotNil(harness.coordinator.playback?.positionObservedAt)
+        XCTAssertEqual(harness.coordinator.consecutivePlaybackFailures, 0)
+        XCTAssertEqual(harness.coordinator.message, "Live signal available.")
+        XCTAssertEqual(harness.factory.creationCount, 1)
+
+        harness.scheduler.advance(by: 2_000_000_000)
+        harness.query.complete(.timedOut)
+        XCTAssertEqual(harness.coordinator.consecutivePlaybackFailures, 1)
+        XCTAssertEqual(harness.coordinator.activeSessionCount, 1)
+    }
+
+    func testConfirmedPauseAndPermissionDenialAreImmediateEvenAfterFailure() {
+        let results: [PlaybackQueryResult] = [.success(.paused), .denied("Automation denied")]
+        for result in results {
+            let harness = LifecycleHarness()
+            harness.startFollowing()
+            harness.query.complete(.success(.playing))
+            harness.factory.completeSuccess()
+            harness.coordinator.receiveAudio(.fixtureLive.withGeneration(harness.coordinator.generation))
+            harness.scheduler.advance(by: 2_000_000_000)
+            harness.query.complete(.failed("Transient error"))
+            harness.scheduler.advance(by: 2_000_000_000)
+            harness.query.complete(result)
+            XCTAssertEqual(harness.coordinator.activeSessionCount, 0)
+            if case .denied = result {
+                XCTAssertEqual(harness.coordinator.state, .permissionBlocked)
+                XCTAssertFalse(harness.coordinator.hasIdleTimer)
+            } else {
+                XCTAssertEqual(harness.coordinator.state, .waiting)
+                XCTAssertEqual(harness.coordinator.consecutivePlaybackFailures, 0)
+                XCTAssertTrue(harness.coordinator.hasIdleTimer)
+            }
+        }
+    }
+
+    func testFrozenPositionPreservesExtrapolationAndClampsToDuration() {
+        let anchor = Date(timeIntervalSince1970: 100)
+        var observation = PlaybackObservation(
+            state: .playing,
+            track: TrackSnapshot(playbackState: .playing, position: 30, duration: 60),
+            positionObservedAt: anchor
+        )
+        observation.freezePosition(at: anchor.addingTimeInterval(4.5))
+        XCTAssertEqual(observation.track?.position, 34.5)
+        XCTAssertNil(observation.positionObservedAt)
+        observation.freezePosition(at: anchor.addingTimeInterval(20))
+        XCTAssertEqual(observation.track?.position, 34.5)
+
+        observation.positionObservedAt = anchor
+        observation.freezePosition(at: anchor.addingTimeInterval(100))
+        XCTAssertEqual(observation.track?.position, 60)
+
+        observation.state = .paused
+        observation.positionObservedAt = anchor
+        observation.track?.position = 12
+        observation.freezePosition(at: anchor.addingTimeInterval(100))
+        XCTAssertEqual(observation.track?.position, 12)
     }
 
     func testRepeatedAudioFramesUseLatestMailboxWithoutRepeatingStatusUpdates() {

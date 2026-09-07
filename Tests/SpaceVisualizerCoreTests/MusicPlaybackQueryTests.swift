@@ -69,13 +69,13 @@ final class MusicPlaybackQueryTests: XCTestCase {
         XCTAssertEqual(observation.track?.artworkAvailable, true)
     }
 
-    func testMalformedOutputFailsInsteadOfInventingPlayback() {
+    func testMalformedMetadataRecoversUsingIndependentPlaybackState() {
         let runner = FakeAppleScriptRunner()
         let query = MusicPlaybackQueryAdapter(
             presence: FakeMusicProcessPresence(isRunning: true),
             runner: runner
         )
-        let received = expectation(description: "Malformed output")
+        let received = expectation(description: "State-only recovery")
         var result: PlaybackQueryResult?
 
         _ = query.query {
@@ -84,9 +84,105 @@ final class MusicPlaybackQueryTests: XCTestCase {
         }
         waitForRunner(runner)
         runner.complete(.success("playing\u{1F}only-one-track-field"))
+        waitForRunner(runner)
+        XCTAssertEqual(runner.script, MusicPlaybackQueryAdapter.stateOnlyScript)
+        XCTAssertEqual(runner.timeout, 0.5)
+        runner.complete(.success("playing\n"))
 
         wait(for: [received], timeout: 1)
-        XCTAssertEqual(result, .failed("Music returned a malformed playback response."))
+        XCTAssertEqual(result, .success(PlaybackObservation(state: .playing)))
+        XCTAssertEqual(runner.runCount, 2)
+    }
+
+    func testDescriptorFailureRecoversWithoutReadingCurrentTrackAgain() {
+        let runner = FakeAppleScriptRunner()
+        let query = MusicPlaybackQueryAdapter(
+            presence: FakeMusicProcessPresence(isRunning: true), runner: runner
+        )
+        let received = expectation(description: "Descriptor recovery")
+        _ = query.query {
+            XCTAssertEqual($0, .success(PlaybackObservation(state: .playing)))
+            received.fulfill()
+        }
+        waitForRunner(runner)
+        runner.complete(.failure(.failed("Apple event descriptor error")))
+        waitForRunner(runner)
+        XCTAssertEqual(runner.script, MusicPlaybackQueryAdapter.stateOnlyScript)
+        XCTAssertFalse(runner.script?.contains("current track") ?? true)
+        runner.complete(.success("playing"))
+        wait(for: [received], timeout: 1)
+    }
+
+    func testInvalidStateAlsoFallsBackAndDoesNotInventPlaybackOrLoop() {
+        let runner = FakeAppleScriptRunner()
+        let query = MusicPlaybackQueryAdapter(
+            presence: FakeMusicProcessPresence(isRunning: true), runner: runner
+        )
+        let received = expectation(description: "Both responses invalid")
+        _ = query.query {
+            XCTAssertEqual($0, .failed("Music returned an unreadable playback state, even without track metadata."))
+            received.fulfill()
+        }
+        waitForRunner(runner)
+        runner.complete(.success("garbage\u{1F}\u{1F}\u{1F}\u{1F}\u{1F}\u{1F}"))
+        waitForRunner(runner)
+        runner.complete(.success("not a playback state"))
+        wait(for: [received], timeout: 1)
+        XCTAssertEqual(runner.runCount, 2)
+    }
+
+    func testFallbackReportsPausedInsteadOfAssumingPlaying() {
+        let runner = FakeAppleScriptRunner()
+        let query = MusicPlaybackQueryAdapter(
+            presence: FakeMusicProcessPresence(isRunning: true), runner: runner
+        )
+        let received = expectation(description: "Paused fallback")
+        _ = query.query {
+            XCTAssertEqual($0, .success(PlaybackObservation(state: .paused)))
+            received.fulfill()
+        }
+        waitForRunner(runner)
+        runner.complete(.success("bad response"))
+        waitForRunner(runner)
+        runner.complete(.success("paused"))
+        wait(for: [received], timeout: 1)
+    }
+
+    func testMusicQuittingBeforeFallbackDoesNotRunAnotherScript() {
+        let presence = FakeMusicProcessPresence(isRunning: true)
+        let runner = FakeAppleScriptRunner()
+        let query = MusicPlaybackQueryAdapter(presence: presence, runner: runner)
+        let received = expectation(description: "Music quit")
+        _ = query.query {
+            XCTAssertEqual($0, .success(PlaybackObservation(state: .stopped, isPlayerAvailable: false)))
+            received.fulfill()
+        }
+        waitForRunner(runner)
+        presence.isRunning = false
+        runner.complete(.success("bad response"))
+        wait(for: [received], timeout: 1)
+        XCTAssertEqual(runner.runCount, 1)
+    }
+
+    func testCancellationCancelsFallbackAndDiscardsLateResult() {
+        let runner = FakeAppleScriptRunner()
+        let query = MusicPlaybackQueryAdapter(
+            presence: FakeMusicProcessPresence(isRunning: true), runner: runner
+        )
+        let noCompletion = expectation(description: "Canceled fallback")
+        noCompletion.isInverted = true
+        let token = query.query { _ in noCompletion.fulfill() }
+        waitForRunner(runner)
+        runner.complete(.success("bad response"))
+        waitForRunner(runner)
+        let canceled = expectation(description: "Both helper requests canceled")
+        canceled.expectedFulfillmentCount = 2
+        runner.tokens.forEach { $0.addCancellationHandler { canceled.fulfill() } }
+        token.cancel()
+        wait(for: [canceled], timeout: 1)
+        XCTAssertTrue(runner.tokens.allSatisfy { $0.isCancelled })
+        runner.complete(.success("playing"))
+        wait(for: [noCompletion], timeout: 0.1)
     }
 
     func testDeniedTimedOutAndCanceledScriptResultsRemainDistinct() {
@@ -113,6 +209,7 @@ final class MusicPlaybackQueryTests: XCTestCase {
             runner.complete(runnerResult)
             wait(for: [received], timeout: 1)
             XCTAssertEqual(result, expected)
+            XCTAssertEqual(runner.runCount, 1)
         }
     }
 
@@ -171,6 +268,7 @@ private final class FakeAppleScriptRunner: BoundedAppleScriptRunning {
     private(set) var runCount = 0
     private(set) var script: String?
     private(set) var timeout: TimeInterval?
+    private(set) var tokens: [LifecycleCancellationToken] = []
     private let runSignal = DispatchSemaphore(value: 0)
     private var completion: ((Result<String, AppleScriptRunnerError>) -> Void)?
 
@@ -184,8 +282,10 @@ private final class FakeAppleScriptRunner: BoundedAppleScriptRunning {
         script = fixedScript
         self.timeout = timeout
         self.completion = completion
+        let token = LifecycleCancellationToken()
+        tokens.append(token)
         runSignal.signal()
-        return LifecycleCancellationToken()
+        return token
     }
 
     func complete(_ result: Result<String, AppleScriptRunnerError>) {
