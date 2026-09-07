@@ -2,17 +2,17 @@
 import PackageDescription
 
 let package = Package(
-    name: "Resonant",
+    name: "SpaceVisualizer",
     platforms: [
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "Resonant", targets: ["ResonantApp"])
+        .executable(name: "SpaceVisualizer", targets: ["SpaceVisualizerApp"])
     ],
     targets: [
         .target(
-            name: "ResonantCore",
-            path: "Sources/ResonantCore",
+            name: "SpaceVisualizerCore",
+            path: "Sources/SpaceVisualizerCore",
             linkerSettings: [
                 .linkedFramework("Accelerate"),
                 .linkedFramework("AudioToolbox"),
@@ -20,9 +20,9 @@ let package = Package(
             ]
         ),
         .executableTarget(
-            name: "ResonantApp",
-            dependencies: ["ResonantCore"],
-            path: "Sources/ResonantApp",
+            name: "SpaceVisualizerApp",
+            dependencies: ["SpaceVisualizerCore"],
+            path: "Sources/SpaceVisualizerApp",
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("SwiftUI"),
@@ -30,14 +30,14 @@ let package = Package(
             ]
         ),
         .testTarget(
-            name: "ResonantCoreTests",
-            dependencies: ["ResonantCore"],
-            path: "Tests/ResonantCoreTests"
+            name: "SpaceVisualizerCoreTests",
+            dependencies: ["SpaceVisualizerCore"],
+            path: "Tests/SpaceVisualizerCoreTests"
         ),
         .testTarget(
-            name: "ResonantUITests",
-            dependencies: ["ResonantCore"],
-            path: "Tests/ResonantUITests"
+            name: "SpaceVisualizerUITests",
+            dependencies: ["SpaceVisualizerCore"],
+            path: "Tests/SpaceVisualizerUITests"
         )
     ]
 )

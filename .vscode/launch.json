@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:music-visualizer}",
+            "name": "Debug SpaceVisualizer",
+            "target": "SpaceVisualizer",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug SpaceVisualizer"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:music-visualizer}",
+            "name": "Release SpaceVisualizer",
+            "target": "SpaceVisualizer",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release SpaceVisualizer"
+        }
+    ]
+}

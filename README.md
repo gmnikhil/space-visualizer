@@ -1,62 +1,123 @@
-# Resonant feasibility spike
+# Space Visualizer
 
-This repository now contains the native macOS feasibility spike for the approved Resonant companion direction. Apple Music remains the player; this diagnostic attempts to observe Music metadata and permitted audio output without signing into Apple Music or recording audio.
+Space Visualizer is a local macOS companion for Apple Music. It follows Music playback automatically and turns fresh, measured Music output into an in-memory spatial scene. Music remains the player; Space Visualizer does not sign in, control playback, save audio, upload data, or use network services.
 
-## Current environment
+This repository contains one application. The production identity is:
 
-The implementation must be built and exercised on macOS. Docker/Linux cannot load SwiftUI, Core Audio, Apple Events, Music.app, or macOS privacy permissions.
+- App bundle: `Space Visualizer.app`
+- Executable: `SpaceVisualizer`
+- Bundle identifier: `com.spacevisualizer.app`
+- Minimum macOS: 14.2
 
-## Run on the M5 Pro
+## Target-Mac verification
 
-From the repository root on the Mac, run the captured verification first:
+The native app requires macOS, Xcode/Swift, Core Audio, Apple Events, and Music.app. Linux and Docker cannot run the native tests or permission flow.
 
-```bash
-./scripts/verify-on-mac.sh
-```
-
-The script records the environment, package description, test output, fixture generation, and app build in `.build/resonant-verification.log`. It automatically prefers `/Applications/Xcode.app` when installed. `uname -s` must print `Darwin` and the test suite must pass before hardware testing.
-
-The app bundle now defaults to an optimized **release** build. Verification runs both debug and release tests; compare Activity Monitor usage only after quitting the old process and opening the rebuilt bundle. For debugging, `RESONANT_BUILD_CONFIGURATION=debug ./scripts/build-resonant-app.sh` explicitly builds an unoptimized app.
-
-To launch the already-built diagnostic:
+From the repository root on the target Mac, run:
 
 ```bash
-open .build/Resonant.app
+./scripts/verify-space-visualizer-on-mac.sh
 ```
 
-Use **Connect to Music** or **Start capture** to request the corresponding permission in context. Approve only the permissions described by the app; microphone and screen capture are not part of this spike.
+The script records environment, package description, debug and optimized release tests, the control fixture, and the signed local bundle in `.build/space-visualizer-verification.log`. A successful build is not hardware acceptance evidence; record route, format, audibility, freshness, and limitations separately.
 
-Inspect the actual Music scripting dictionary when documenting the target Mac:
+To inspect the installed Music dictionary and create the signed-bundle Automation/system-audio attribution checklist, run:
 
 ```bash
-./scripts/inspect-music-interface.sh
+./scripts/verify-music-observation-on-mac.sh
 ```
 
-This writes `.build/Music.sdef.xml`. See `docs/apple-music-scriptable-interface.md` for the exact fields used.
+This second script does not claim a permission pass by itself: complete the generated `.build/space-visualizer-music-observation-checklist.md` from the signed app and record the actual prompt attribution.
 
-Run the unprotected control fixture before Apple Music tests:
+After audio-pipeline changes, run the focused debug/release and static-capture check:
 
 ```bash
-./scripts/generate-control-fixture.sh
+./scripts/verify-space-visualizer-audio-pipeline-on-mac.sh
 ```
 
-Because the tap is intentionally isolated to the Music process, add `.build/ResonantControl.wav` to Music with **File → Add to Library**, then play it from Music. Do not play the fixture in QuickTime or another app; that would correctly produce no Music-process samples.
+For the available Thread Sanitizer race check:
 
-Then use the diagnostic window to test, in order:
+```bash
+RUN_THREAD_SANITIZER=1 ./scripts/verify-space-visualizer-audio-pipeline-on-mac.sh
+```
 
-1. Local unprotected control played by Music through built-in speakers.
-2. Streamed Apple Music track through built-in speakers.
-3. Downloaded Apple Music track through built-in speakers.
-4. Repeat the above on AirPlay if available.
+For an explicitly unoptimized debug app:
 
-The app exports an audio-free evidence report. A successful build does not prove that protected Apple Music playback is capturable; the report must contain the measured result.
+```bash
+SPACE_VISUALIZER_BUILD_CONFIGURATION=debug ./scripts/build-space-visualizer-app.sh
+```
 
-## Performance verification
+After presentation changes, verify the full-canvas shell and optional diagnostics:
 
-The display link requests up to 120 Hz; macOS and the attached display choose the actual cadence. FFT analysis runs on a serial worker with one overwrite-only feature slot, while diagnostic state is published at most four times per second. Only the visual subtree observes high-frequency features. Stop cancels the worker and clears the latest result. Audio frames use overlapping windows and discard backlog rather than replaying it.
+```bash
+./scripts/verify-space-visualizer-presentation-on-mac.sh
+```
 
-After building, check scrolling and CPU during at least two minutes of capture, then check idle CPU after Stop. These architecture changes are not a measured latency or CPU guarantee. Music metadata queries still use the main-thread AppleScript adapter and remain a possible source of brief UI stalls.
+For the normal interactive build and launch:
 
-## Scope boundary
+```bash
+./scripts/build-space-visualizer-app.sh
+open ".build/Space Visualizer.app"
+```
 
-This is a feasibility diagnostic, not the production visualizer. The 2D signal panel and projected 3D shape preview validate the combined visual direction. The polished Metal scene engine, library, lyrics, cloud processing, microphone capture, DRM workarounds, and App Store distribution are out of scope.
+The top-bar **Export image** action renders the current latest scene snapshot as a 3840×2160 PNG, includes available song title/artist/album and position details, and opens a save-location panel. It does not capture the screen, audio, or controls, and the image rendering path has no display link.
+
+The test fixture can be generated independently:
+
+```bash
+./scripts/generate-space-visualizer-control-fixture.sh
+```
+
+Add `.build/SpaceVisualizerControl.wav` to Music with **File → Add to Library**, then play it from Music. Do not play it in another player: the capture path intentionally targets only the Music process.
+
+## First launch and permissions
+
+The first-run explanation describes two local permissions:
+
+1. **Automation**: reads Music playback state and optional track details. It must not launch Music or mutate playback.
+2. **System Audio Recording**: permits the Music-only process tap to analyze transient PCM in memory. It is not microphone input or screen capture.
+
+No permission prompt is requested before the user chooses **Enable automatic following**. If permission is denied or later revoked, Space Visualizer stops affected work, shows retry/System Settings guidance, and does not prompt on every idle check. A new bundle identity may cause macOS to ask again; approve the signed `Space Visualizer.app` only when the prompt matches this explanation.
+
+When Music is absent or paused, the window remains static and performs one bounded playback check every five seconds. When Music is playing, idle polling stops and a bounded active watchdog observes for pause, stop, quit, and track changes. Silence in fresh samples is displayed as silence, not treated as proof that playback stopped. The displayed song position is advanced locally between authoritative Music checks for visual accuracy; it never drives playback state or capture decisions.
+
+## Privacy and scope
+
+Capture is limited to the explicitly resolved Music process and selected route. PCM is bounded, transient, and never written to disk. The app declares no microphone, screen-capture, network, Apple ID, DRM, or private MediaRemote capability. Source-quality labels such as Lossless, Hi-Res Lossless, and Dolby Atmos remain unknown unless a supported public interface exposes them; measured PCM format is shown separately.
+
+Diagnostics and acceptance export are optional and audio-free. Normal use has no required Start capture button, phase-selection workflow, or evidence-recording step.
+
+## Performance acceptance
+
+Use an optimized release build and record Mac model/OS, route, display, window size, and display cadence. Required targets are measured acceptance gates, not claims made by the build:
+
+- idle mean below 2% of one core over 60 seconds;
+- active mean below 50% of one core for the recorded M5 Pro workload;
+- p95 main-thread frame work within the selected display interval;
+- no app-caused interaction stall above 100 ms;
+- no monotonic resource or memory growth through the documented 20-cycle run.
+
+The visualizer requests display-synchronized rendering up to 120 Hz, while the system selects the actual cadence. Analysis uses overlapping windows and a latest-result-only handoff.
+
+The release process sampler launches only Space Visualizer and never starts or controls Music. Run it with Music absent/paused for the 60-second idle gate, then with Music playback started manually for the five-minute active gate:
+
+```bash
+./scripts/measure-space-visualizer-performance-on-mac.sh idle 60
+./scripts/measure-space-visualizer-performance-on-mac.sh active 300
+```
+
+It writes an audio-free CSV and Markdown summary under `.build/`; record the optional Diagnostics panel's display-tick p50/p95 values alongside them.
+
+Use `docs/space-visualizer-release-acceptance-checklist.md` for the complete manual permission, route, lifecycle, 20-cycle, and release-handoff evidence packet.
+
+## Rollback
+
+Checkpoint `7c4b0b5` is the documented predecessor boundary. Preserve unrelated working-tree changes and roll back in a separate branch or worktree, for example:
+
+```bash
+git switch -c resonant-checkpoint-rollback 7c4b0b5
+gn=".build/Resonant.app"
+rm -rf "$gn" # only after quitting any old Resonant process
+```
+
+Do not reset or delete unrelated user work. The new bundle identity has separate macOS TCC records; never migrate those records manually. If the old `Resonant` entry remains under Privacy & Security, that is stale history for `com.resonant.FeasibilitySpike`, not the current app. Quit/delete any old installed Resonant copy if it is no longer needed, then turn off or remove the old entry directly in System Settings → Privacy & Security. `tccutil` resets may not remove the displayed row on newer macOS; do not delete the TCC database. Reopen System Settings or reboot if the row is only cached.
