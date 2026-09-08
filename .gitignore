@@ -12,3 +12,12 @@ xcuserdata/
 *.pem
 *.p12
 resonant-diagnostic-report*.json
+
+# Local-only agent files, design references, and generators
+.pi/
+image_ref/
+*.py
+scripts/inspect-coreaudio-sdk.sh
+
+# Local recordings
+videos/space_visualizer.mov
