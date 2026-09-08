@@ -17,7 +17,7 @@ BIN="$(swift build -c "$CONFIGURATION" --show-bin-path)/SpaceVisualizer"
 APP="$ROOT/.build/Space Visualizer.app"
 # Remove only the obsolete generated artifact in this repository. Do not touch
 # installed apps or TCC records; macOS owns those separately.
-rm -rf "$ROOT/.build/Resonant.app" "$ROOT/.build/SpaceVisualizer.app" "$APP"
+rm -rf "$ROOT/.build/SpaceVisualizer.app" "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/SpaceVisualizer"
 cp "$ROOT/SpaceVisualizerApp/Info.plist" "$APP/Contents/Info.plist"

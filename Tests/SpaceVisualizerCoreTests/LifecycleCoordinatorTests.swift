@@ -314,7 +314,7 @@ final class LifecycleCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.coordinator.playback?.track?.position, 42)
         XCTAssertNotNil(harness.coordinator.playback?.positionObservedAt)
         XCTAssertEqual(harness.coordinator.consecutivePlaybackFailures, 0)
-        XCTAssertEqual(harness.coordinator.message, "Live signal available.")
+        XCTAssertEqual(harness.coordinator.message, "")
         XCTAssertEqual(harness.factory.creationCount, 1)
 
         harness.scheduler.advance(by: 2_000_000_000)

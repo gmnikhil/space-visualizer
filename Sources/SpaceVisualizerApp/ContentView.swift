@@ -152,10 +152,12 @@ struct ContentView: View {
                         .tracking(1)
                         .foregroundStyle(statusColor(for: presentation.state))
                 }
-                Text(presentation.message)
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(.primary.opacity(0.9))
-                    .fixedSize(horizontal: false, vertical: true)
+                if !presentation.message.isEmpty {
+                    Text(presentation.message)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(.primary.opacity(0.9))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 if let playback = presentation.playback,
                    let track = playback.track,

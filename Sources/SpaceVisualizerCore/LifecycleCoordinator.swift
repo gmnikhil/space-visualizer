@@ -658,7 +658,9 @@ public final class SpaceVisualizerLifecycleCoordinator {
             message = "Music is playing, but the latest audio is quiet."
         } else {
             state = .visualizing
-            message = "Live signal available."
+            // The LIVE badge already communicates this state; reserve the
+            // message line for actionable or more specific information.
+            message = ""
         }
         if consecutivePlaybackFailures > 0 { message = playbackFailureMessage }
     }
@@ -798,7 +800,7 @@ public final class SpaceVisualizerLifecycleCoordinator {
             playback = observedPlayback
             if wasUncertain, observedPlayback.isPlaying, isActiveObservation {
                 message = hasReceivedFreshInput
-                    ? (state == .silent ? "Music is playing, but the latest audio is quiet." : "Live signal available.")
+                    ? (state == .silent ? "Music is playing, but the latest audio is quiet." : "")
                     : "Music is playing. Waiting for fresh audio."
             }
             handlePlayback(observedPlayback)
