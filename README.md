@@ -6,7 +6,9 @@ Space Visualizer is a native macOS companion for Apple Music that turns the musi
 
 ## See it in action
 
-[▶ Watch the Space Visualizer demo](./videos/space_visualizer_short.mp4)
+[![Space Visualizer demo](./videos/space_visualizer_short.gif)](./videos/space_visualizer_short.mp4)
+
+_Click the preview to open the full-quality MP4._
 
 ## Features
 
