@@ -4,6 +4,12 @@
 
 Space Visualizer is a native macOS companion for Apple Music that turns the music playing on your Mac into a live, audio-reactive visual scene. It follows playback automatically, bringing sound into motion while Apple Music remains in charge of listening.
 
+## See it in action
+
+<video src="videos/space_visualizer_short.mov" controls muted playsinline width="100%">
+  <a href="videos/space_visualizer_short.mov">Watch the Space Visualizer demo</a>
+</video>
+
 ## Features
 
 - **Visuals driven by real audio** — the scene responds to the energy and frequency content of Music’s output, rather than a canned animation.
