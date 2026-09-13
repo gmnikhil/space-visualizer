@@ -6,7 +6,7 @@ Space Visualizer is a native macOS companion for Apple Music that turns the musi
 
 ## See it in action
 
-[![Space Visualizer demo](./videos/space_visualizer_short.gif)](./videos/space_visualizer_short.mp4)
+![Space Visualizer demo](./videos/space_visualizer.gif)
 
 ## Features
 
@@ -35,11 +35,16 @@ Open **Visualizer → Diagnostics…** for the active automatic-following sessio
 
 Fully covered, hidden, and minimized windows suspend work. Revealing the window rechecks playback immediately; bringing an already-visible window to the foreground also requests a check without restarting healthy capture. If recovery ever stalls, open Diagnostics and export a report before restarting the app.
 
-## Testing stereo reactions on Mac
+## Build and launch
 
-Build with `scripts/build-space-visualizer-app.sh` and run `swift test`. Play stereo control audio through Music: left-only then right-only tones should lift the corresponding side; centered tones should lift matching partners equally. Different tones in each channel should activate different pairs. The central rings continue responding to the broad mixed signal.
+On macOS 14.2 or later, install Xcode Command Line Tools (`xcode-select --install`) with Swift 5.9 or later. From the repository root, run:
 
-Compare 30 / 60 / 120 FPS with the same track, window size, sample rate, and power state. Pair response timing should stay consistent. Compare release-build CPU and Energy Impact with the previous version; stereo frequency analysis adds worker-side FFT work, so battery impact must be measured rather than assumed. Also check silence, pause/resume, window hiding, and Reduce Motion.
+```sh
+./scripts/build-space-visualizer-app.sh
+open ".build/Space Visualizer.app"
+```
+
+The script builds a release app and signs it locally. Once launched, enable automatic following, grant the requested permissions, and play music in Apple Music.
 
 ## Local by design
 
