@@ -34,12 +34,12 @@ enum SpatialStage {
             let shadow = CGRect(x: floorPoint.x - radius * 1.7, y: floorPoint.y,
                                 width: radius * 3.4, height: radius * 0.45)
             context.fill(Path(ellipseIn: shadow), with: .color(color.opacity(0.12)))
-            if ball.energy > 0.03 && !reduceMotion {
+            if !reduceMotion {
                 var trail = Path()
                 trail.move(to: floorPoint)
                 trail.addQuadCurve(to: center, control: CGPoint(x: center.x - radius * 3, y: floorPoint.y - radius * 4))
                 context.stroke(trail, with: .linearGradient(
-                    Gradient(colors: [color.opacity(0), color.opacity(0.35)]),
+                    Gradient(colors: [color.opacity(0.04), color.opacity(0.14 + ball.energy * 0.21)]),
                     startPoint: floorPoint, endPoint: center), lineWidth: 1.2)
             }
             let bounds = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)

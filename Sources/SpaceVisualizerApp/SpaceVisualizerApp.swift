@@ -11,5 +11,6 @@ struct SpaceVisualizerApp: App {
             ContentView(engine: engine, automaticFollowing: automaticFollowing)
                 .frame(minWidth: 1_040, minHeight: 760)
         }
+        .commands { VisualizerCommands() }
     }
 }

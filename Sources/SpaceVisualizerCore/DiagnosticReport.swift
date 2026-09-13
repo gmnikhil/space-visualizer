@@ -107,6 +107,10 @@ public struct SpaceVisualizerDiagnosticsExport: Codable, Equatable, Sendable {
     public let isWindowVisible: Bool
     public let playbackState: String?
     public let legacyReport: DiagnosticReport?
+    public let captureRoute: AudioRouteFacts?
+    public let captureFormat: AudioFormatFacts?
+    public let captureSignal: String?
+    public let playbackChecks: PlaybackCheckDiagnostics?
     public let display: DisplayTelemetrySnapshot
 
     public init(
@@ -126,6 +130,10 @@ public struct SpaceVisualizerDiagnosticsExport: Codable, Equatable, Sendable {
         self.isWindowVisible = presentation.isWindowVisible
         self.playbackState = presentation.playback?.state.rawValue
         self.legacyReport = legacyReport
+        self.captureRoute = presentation.captureRoute
+        self.captureFormat = presentation.captureFormat
+        self.captureSignal = presentation.captureSignalLabel
+        self.playbackChecks = presentation.playbackChecks
         self.display = display
     }
 

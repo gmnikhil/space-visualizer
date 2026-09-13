@@ -400,19 +400,40 @@ public struct LifecyclePresentation: Equatable, Sendable {
     public let consentIntent: Bool
     public let isWindowVisible: Bool
     public let playback: PlaybackObservation?
+    public let captureRoute: AudioRouteFacts?
+    public let captureFormat: AudioFormatFacts?
+    public let playbackChecks: PlaybackCheckDiagnostics
+
+    public var captureSignalLabel: String {
+        switch state {
+        case .visualizing: return "Live measured audio"
+        case .silent: return "Captured silence"
+        case .starting: return "Waiting for fresh audio"
+        case .recovering: return "Input unavailable · recovering"
+        case .permissionBlocked: return "Permission required"
+        case .failed: return "Capture failed"
+        case .onboarding, .waiting, .suspended, .terminated: return "Capture inactive"
+        }
+    }
 
     public init(
         state: SpaceVisualizerLifecycleState,
         message: String,
         consentIntent: Bool,
         isWindowVisible: Bool,
-        playback: PlaybackObservation?
+        playback: PlaybackObservation?,
+        captureRoute: AudioRouteFacts? = nil,
+        captureFormat: AudioFormatFacts? = nil,
+        playbackChecks: PlaybackCheckDiagnostics = PlaybackCheckDiagnostics()
     ) {
         self.state = state
         self.message = message
         self.consentIntent = consentIntent
         self.isWindowVisible = isWindowVisible
         self.playback = playback
+        self.captureRoute = captureRoute
+        self.captureFormat = captureFormat
+        self.playbackChecks = playbackChecks
     }
 }
 
@@ -459,6 +480,9 @@ public final class SpaceVisualizerLifecycleCoordinator {
     private var queryInFlight = false
     private var queryID: UInt64 = 0
     private var queryGeneration: UInt64 = 0
+    private var lastCheckStartedAt: Date?
+    private var lastCheckCompletedAt: Date?
+    private var lastCheckResult = "No check yet"
     private var pendingNotificationHint = false
     public private(set) var consecutivePlaybackFailures = 0
     private var lastPlaybackFailure: String?
@@ -623,6 +647,23 @@ public final class SpaceVisualizerLifecycleCoordinator {
         }
     }
 
+    /// A visible window returning to the foreground should not wait for its
+    /// next periodic tick. Reconcile missing timers without restarting healthy
+    /// capture; coalesce with any observation already in flight.
+    public func refreshPlaybackObservation() {
+        onLifecycleQueue {
+            guard self.isWindowVisible, self.consentIntent else { return }
+            if self.state == .waiting {
+                self.scheduleIdleTimer()
+            } else if self.isActiveObservation {
+                self.scheduleActiveWatchdog()
+            } else {
+                return
+            }
+            self.beginPlaybackQuery()
+        }
+    }
+
     /// Optional platform notification hint. It is never authoritative and is
     /// coalesced behind the same one-query-in-flight guard as the watchdog.
     public func playbackNotificationHint() {
@@ -735,6 +776,7 @@ public final class SpaceVisualizerLifecycleCoordinator {
         let requestID = queryID
         let requestGeneration = generation
         let requestStartedAt = Date()
+        lastCheckStartedAt = requestStartedAt
         queryGeneration = requestGeneration
         queryInFlight = true
         queryDeadline = scheduler.schedule(after: Self.playbackQueryTimeoutNanoseconds, repeating: nil) { [weak self] in
@@ -789,6 +831,16 @@ public final class SpaceVisualizerLifecycleCoordinator {
 
         // A canceled/obsolete query cannot mutate a newly opened window.
         guard requestGeneration == generation, state != .terminated else { return }
+
+        lastCheckCompletedAt = Date()
+        switch result {
+        case let .success(observation):
+            lastCheckResult = observation.isPlayerAvailable ? observation.state.rawValue : "Music unavailable"
+        case .timedOut: lastCheckResult = "Timed out"
+        case .canceled: lastCheckResult = "Canceled"
+        case let .denied(reason): lastCheckResult = "Permission denied: \(reason)"
+        case let .failed(reason): lastCheckResult = "Failed: \(reason)"
+        }
 
         switch result {
         case let .success(observation):
@@ -1049,6 +1101,10 @@ public final class SpaceVisualizerLifecycleCoordinator {
         queryDeadline = nil
         let canceledQuery = queryToken
         queryToken = nil
+        if queryInFlight {
+            lastCheckCompletedAt = Date()
+            lastCheckResult = "Canceled by lifecycle transition"
+        }
         queryInFlight = false
         queryID &+= 1
         canceledQuery?.cancel()
@@ -1086,7 +1142,17 @@ public final class SpaceVisualizerLifecycleCoordinator {
             message: message,
             consentIntent: consentIntent,
             isWindowVisible: isWindowVisible,
-            playback: playback
+            playback: playback,
+            captureRoute: (activeResources?.capture as? CaptureSessionFactsProviding)?.route,
+            captureFormat: (activeResources?.capture as? CaptureSessionFactsProviding)?.format,
+            playbackChecks: PlaybackCheckDiagnostics(
+                lastStartedAt: lastCheckStartedAt,
+                lastCompletedAt: lastCheckCompletedAt,
+                lastResult: lastCheckResult,
+                isChecking: queryInFlight,
+                pollingStatus: hasIdleTimer ? "Waiting · every 5 seconds"
+                    : (hasActiveWatchdog ? "Active · every 2 seconds" : "Stopped")
+            )
         )
     }
 

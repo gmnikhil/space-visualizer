@@ -506,11 +506,15 @@ public final class AudioAnalyzer {
         }
 
         let mono = makeMonoFrame(from: samples)
+        let stereo: (left: [Float], right: [Float])? = configuration.channelCount == 2
+            ? (channelFrame(from: samples, channel: 0), channelFrame(from: samples, channel: 1)) : nil
         let rms = rootMeanSquare(mono)
+        // Opposite-phase stereo must not disappear through mono cancellation.
+        let signalRMS = stereo.map { max(rootMeanSquare($0.left), rootMeanSquare($0.right)) } ?? rms
         let peak = mono.reduce(Float.zero) { partial, sample in
             max(partial, sample.isFinite ? abs(sample) : 0)
         }
-        guard rms > configuration.silenceThreshold else {
+        guard signalRMS > configuration.silenceThreshold else {
             return AudioFeatures(
                 timestamp: timestamp,
                 rms: rms,
@@ -527,6 +531,16 @@ public final class AudioAnalyzer {
 
         let magnitudes = fftMagnitudes(mono)
         let bands = makeLogBands(magnitudes: magnitudes)
+        let regions: StereoRegionLevels
+        if let stereo {
+            regions = StereoRegionLevels(
+                left: makeRegions(magnitudes: fftMagnitudes(stereo.left)),
+                right: makeRegions(magnitudes: fftMagnitudes(stereo.right))
+            )
+        } else {
+            let levels = makeRegions(magnitudes: magnitudes)
+            regions = StereoRegionLevels(left: levels, right: levels)
+        }
         return AudioFeatures(
             timestamp: timestamp,
             rms: rms,
@@ -535,10 +549,31 @@ public final class AudioAnalyzer {
             mids: normalizedEnergy(magnitudes, low: 250, high: 4_000),
             highs: normalizedEnergy(magnitudes, low: 4_000, high: 16_000),
             bands: bands,
+            stereoRegions: regions,
             isSilent: false,
             isFresh: true,
             generation: generation
         )
+    }
+
+    private func channelFrame(from samples: [Float], channel: Int) -> [Float] {
+        let start = samples.count - configuration.fftSize * configuration.channelCount
+        return (0..<configuration.fftSize).map { index in
+            let sample = samples[start + index * configuration.channelCount + channel]
+            return sample.isFinite ? sample : 0
+        }
+    }
+
+    private func makeRegions(magnitudes: [Float]) -> [Float] {
+        (0..<StereoRegions.count).map { region in
+            let lower = max(1, Int(ceil(StereoRegions.edges[region] * Double(configuration.fftSize) / configuration.sampleRate)))
+            let upper = min(magnitudes.count, Int(ceil(StereoRegions.edges[region + 1] * Double(configuration.fftSize) / configuration.sampleRate)))
+            guard lower < upper else { return 0 }
+            let power = magnitudes[lower..<upper].reduce(Float.zero, +)
+            let amplitude = sqrt(max(0, power))
+            // Smooth compression retains headroom instead of clipping hot regions to 1.
+            return amplitude.isFinite ? Float(1 - exp(-Double(amplitude) * 8)) : 0
+        }
     }
 
     private func makeMonoFrame(from samples: [Float]) -> [Float] {
@@ -742,6 +777,20 @@ public struct FeatureSmoother: Sendable {
         let smoothed = zip(values, targets).map { approach($0.0, $0.1) }
         let previousBands = current.bands + Array(repeating: 0, count: max(0, next.bands.count - current.bands.count))
         let bands = zip(previousBands, next.bands).map { approach($0.0, $0.1) }
+        let stereoRegions = next.stereoRegions.map { target in
+            func smooth(_ old: [Float], _ new: [Float]) -> [Float] {
+                (0..<StereoRegions.count).map { region in
+                    let previous = StereoRegions.level(old, at: region)
+                    let value = StereoRegions.level(new, at: region)
+                    let base = value > previous ? StereoRegions.attack(for: region) : StereoRegions.release(for: region)
+                    return previous + (value - previous) * coefficient(base)
+                }
+            }
+            return StereoRegionLevels(
+                left: smooth(current.stereoRegions?.left ?? [], target.left),
+                right: smooth(current.stereoRegions?.right ?? [], target.right)
+            )
+        }
         current = AudioFeatures(
             timestamp: next.timestamp,
             rms: smoothed[0],
@@ -750,6 +799,7 @@ public struct FeatureSmoother: Sendable {
             mids: smoothed[3],
             highs: smoothed[4],
             bands: bands,
+            stereoRegions: stereoRegions,
             isSilent: next.isSilent,
             isFresh: next.isFresh,
             generation: next.generation

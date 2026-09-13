@@ -87,7 +87,12 @@ final class ConfigurationContractTests: XCTestCase {
         XCTAssertTrue(observer.contains("NSApplication.didHideNotification"))
         XCTAssertTrue(observer.contains("NSApplication.didUnhideNotification"))
         XCTAssertFalse(observer.contains("didResignKeyNotification"))
-        XCTAssertFalse(observer.contains("didBecomeKeyNotification"))
+        XCTAssertTrue(observer.contains("didBecomeKeyNotification"))
+        XCTAssertTrue(observer.contains("didBecomeActiveNotification"))
+        XCTAssertTrue(observer.contains("!NSApp.isHidden"))
+        XCTAssertFalse(contentView.contains("guard automaticFollowing.presentation.isWindowVisible"))
+        XCTAssertFalse(contentView.contains(".onChange(of: scenePhase)"))
+        XCTAssertTrue(contentView.contains("refreshPlaybackObservation()"))
     }
 
     func testCaptureUsesOnlyDirectMusicTapWithoutLegacyOrSystemFallback() throws {

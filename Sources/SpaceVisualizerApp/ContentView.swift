@@ -16,7 +16,6 @@ struct ContentView: View {
     @ObservedObject var engine: DiagnosticEngine
     @ObservedObject var automaticFollowing: AutomaticFollowingViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("visualizerFramesPerSecond") private var framesPerSecond = DisplayCadencePolicy.defaultFramesPerSecond
     @State private var showingDiagnostics = false
     @State private var displayTelemetry = DisplayFrameTelemetry()
@@ -60,14 +59,6 @@ struct ContentView: View {
             engine.stop()
             automaticFollowing.closeWindow()
         }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .background {
-                engine.stop()
-                automaticFollowing.sleep()
-            } else if phase == .active {
-                automaticFollowing.wake()
-            }
-        }
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.willSleepNotification)) { _ in
             engine.stop()
             automaticFollowing.sleep()
@@ -80,21 +71,24 @@ struct ContentView: View {
             automaticFollowing.quit()
         }
         .background {
-            WindowVisibilityObserver { visible in
-                guard automaticFollowing.presentation.isWindowVisible != visible else { return }
+            WindowVisibilityObserver { visible, recheckPlayback in
+                // Presentation arrives asynchronously; only the coordinator may
+                // deduplicate visibility events against authoritative state.
                 automaticFollowing.setWindowVisible(visible)
+                if recheckPlayback { automaticFollowing.refreshPlaybackObservation() }
             }
             .frame(width: 1, height: 1)
             .opacity(0.001)
             .accessibilityHidden(true)
         }
+        .focusedSceneValue(\.showVisualizerDiagnostics, { showingDiagnostics = true })
         .sheet(isPresented: $showingDiagnostics) {
             DiagnosticsPanel(
                 engine: engine,
                 automaticFollowing: automaticFollowing,
                 displayTelemetry: displayTelemetry
             )
-            .frame(minWidth: 620, minHeight: 460)
+            .frame(minWidth: 700, minHeight: 620)
         }
     }
 
@@ -122,27 +116,6 @@ struct ContentView: View {
             }
             Spacer()
             HStack(spacing: 8) {
-                Picker("Frame rate", selection: Binding(
-                    get: { DisplayCadencePolicy.validatedFramesPerSecond(framesPerSecond) },
-                    set: { framesPerSecond = $0 }
-                )) {
-                    ForEach(DisplayCadencePolicy.supportedFramesPerSecond, id: \.self) { rate in
-                        Text("\(rate) FPS").tag(rate)
-                    }
-                }
-                .pickerStyle(.menu)
-                .fixedSize()
-                .help("Maximum visualizer frame rate. Lower rates reduce rendering work; actual rate depends on your display and macOS.")
-                .accessibilityHint("Choose 30, 60, or 120 frames per second. Lower rates use less rendering power.")
-
-                Button {
-                    showingDiagnostics = true
-                } label: {
-                    Label("Diagnostics", systemImage: "waveform.path.ecg")
-                }
-                .buttonStyle(.bordered)
-                .accessibilityHint("Opens optional audio-free diagnostics and export")
-
                 Button {
                     exportCurrentImage()
                 } label: {
@@ -573,16 +546,24 @@ private struct DiagnosticsPanel: View {
 
             Grid(alignment: .leading, horizontalSpacing: 22, verticalSpacing: 10) {
                 GridRow { Text("Following"); Text(automaticFollowing.presentation.state.rawValue) }
+                GridRow { Text("Window visible"); Text(automaticFollowing.presentation.isWindowVisible ? "Yes" : "No") }
+                GridRow { Text("Polling"); Text(automaticFollowing.presentation.playbackChecks.pollingStatus) }
+                GridRow { Text("Check in progress"); Text(automaticFollowing.presentation.playbackChecks.isChecking ? "Yes" : "No") }
+                GridRow { Text("Last check started"); Text(checkTime(automaticFollowing.presentation.playbackChecks.lastStartedAt)) }
+                GridRow { Text("Last check completed"); Text(checkTime(automaticFollowing.presentation.playbackChecks.lastCompletedAt)) }
+                GridRow { Text("Last check result"); Text(automaticFollowing.presentation.playbackChecks.lastResult) }
                 GridRow { Text("Playback"); Text(automaticFollowing.presentation.playback?.state.rawValue ?? "unknown") }
-                GridRow { Text("Route"); Text(engine.state.route?.name ?? "unknown") }
+                GridRow { Text("Route"); Text(automaticFollowing.presentation.captureRoute?.name ?? "No active route") }
                 GridRow { Text("Format"); Text(formatLabel) }
-                GridRow { Text("Signal"); Text(engine.viewModel.audioLabel) }
+                GridRow { Text("Signal"); Text(automaticFollowing.presentation.captureSignalLabel) }
                 GridRow { Text("Display tick p50/p95"); Text(displayTimingLabel) }
             }
             .font(.system(size: 11, design: .monospaced))
             .foregroundStyle(.secondary)
 
-            Text(engine.captureDiagnostics)
+            Text(automaticFollowing.presentation.message.isEmpty
+                 ? automaticFollowing.presentation.captureSignalLabel
+                 : automaticFollowing.presentation.message)
                 .font(.system(size: 10, design: .monospaced))
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -610,8 +591,13 @@ private struct DiagnosticsPanel: View {
     }
 
     private var formatLabel: String {
-        guard let format = engine.state.format else { return "unknown" }
+        guard let format = automaticFollowing.presentation.captureFormat else { return "No active format" }
         return "\(Int(format.sampleRate)) Hz · \(format.channelCount) ch · \(format.sampleFormat.rawValue)"
+    }
+
+    private func checkTime(_ date: Date?) -> String {
+        guard let date else { return "Never" }
+        return date.formatted(date: .abbreviated, time: .standard)
     }
 
     private var displayTimingLabel: String {
@@ -625,7 +611,6 @@ private struct DiagnosticsPanel: View {
         let export = SpaceVisualizerDiagnosticsExport(
             appBuild: engine.buildContext,
             presentation: automaticFollowing.presentation,
-            legacyReport: engine.lastReport,
             display: displayTelemetry.snapshot()
         )
         do {

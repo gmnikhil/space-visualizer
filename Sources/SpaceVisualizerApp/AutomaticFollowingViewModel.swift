@@ -38,6 +38,7 @@ final class AutomaticFollowingViewModel: ObservableObject {
 
     func openWindow() { coordinator.openWindow() }
     func setWindowVisible(_ visible: Bool) { coordinator.setWindowVisible(visible) }
+    func refreshPlaybackObservation() { coordinator.refreshPlaybackObservation() }
     func closeWindow() { coordinator.closeWindow() }
     func sleep() { coordinator.sleep() }
     func wake() { coordinator.wake() }

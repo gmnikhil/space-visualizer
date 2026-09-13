@@ -22,7 +22,7 @@ import CoreAudio
 /// A local, nonmuting Music-only process tap. It creates one private aggregate
 /// containing that tap and reads it through `AudioDeviceIOProc`; there is no
 /// legacy render-unit or all-system-audio fallback.
-public final class CoreAudioProcessTapCapture: CaptureResourceLifecycle {
+public final class CoreAudioProcessTapCapture: CaptureResourceLifecycle, CaptureSessionFactsProviding {
     public let collector: PCMBufferCollector
     public let route: AudioRouteFacts
     public private(set) var format: AudioFormatFacts?
@@ -225,7 +225,7 @@ public final class CoreAudioProcessTapCapture: CaptureResourceLifecycle {
 
 #else
 
-public final class CoreAudioProcessTapCapture: CaptureResourceLifecycle {
+public final class CoreAudioProcessTapCapture: CaptureResourceLifecycle, CaptureSessionFactsProviding {
     public let collector: PCMBufferCollector
     public let route: AudioRouteFacts
     public private(set) var format: AudioFormatFacts?

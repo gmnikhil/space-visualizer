@@ -60,6 +60,31 @@ final class LifecycleCoordinatorTests: XCTestCase {
         XCTAssertTrue(harness.coordinator.hasActiveWatchdog)
     }
 
+    func testDiagnosticsUsesActiveSessionFactsAndClearsThemAfterTeardown() {
+        let harness = LifecycleHarness()
+        harness.startFollowing()
+        XCTAssertNil(harness.coordinator.presentation.captureRoute)
+        harness.query.complete(.success(.playing))
+        XCTAssertEqual(harness.coordinator.presentation.captureSignalLabel, "Waiting for fresh audio")
+        harness.factory.completeSuccess()
+        harness.coordinator.receiveAudio(.fixtureLive.withGeneration(harness.coordinator.generation))
+        let live = harness.coordinator.presentation
+        XCTAssertEqual(live.captureRoute, harness.capture.route)
+        XCTAssertEqual(live.captureFormat, harness.capture.format)
+        XCTAssertEqual(live.captureSignalLabel, "Live measured audio")
+        let report = SpaceVisualizerDiagnosticsExport(appBuild: "test", presentation: live)
+        XCTAssertEqual(report.captureRoute, live.captureRoute)
+        XCTAssertEqual(report.captureFormat, live.captureFormat)
+        XCTAssertEqual(report.captureSignal, live.captureSignalLabel)
+        XCTAssertNil(report.legacyReport)
+        harness.coordinator.receiveAudio(.fixtureSilent.withGeneration(harness.coordinator.generation))
+        XCTAssertEqual(harness.coordinator.presentation.captureSignalLabel, "Captured silence")
+        harness.coordinator.setWindowVisible(false)
+        XCTAssertNil(harness.coordinator.presentation.captureRoute)
+        XCTAssertNil(harness.coordinator.presentation.captureFormat)
+        XCTAssertEqual(harness.coordinator.presentation.captureSignalLabel, "Capture inactive")
+    }
+
     func testHiddenWindowTearsDownExpensiveWorkAndReopenStartsFreshCheck() {
         let harness = LifecycleHarness()
         harness.startFollowing()
@@ -80,6 +105,103 @@ final class LifecycleCoordinatorTests: XCTestCase {
         harness.coordinator.openWindow()
         XCTAssertEqual(harness.coordinator.state, .waiting)
         XCTAssertEqual(harness.query.queryCount, checksBeforeReopen + 1)
+    }
+
+    func testRapidHideRevealResumesWithoutWaitingForPresentationDelivery() {
+        let harness = LifecycleHarness()
+        var queuedPresentations: [LifecyclePresentation] = []
+        harness.coordinator.stateDidChange = { queuedPresentations.append($0) }
+        harness.startFollowing()
+        harness.query.complete(.success(.playing))
+        harness.factory.completeSuccess()
+        harness.coordinator.receiveAudio(.fixtureLive.withGeneration(harness.coordinator.generation))
+        let staleUIPresentation = harness.coordinator.presentation
+        harness.coordinator.setWindowVisible(false)
+        // UI still thinks it is visible. Forward the event anyway.
+        XCTAssertTrue(staleUIPresentation.isWindowVisible)
+        harness.coordinator.setWindowVisible(true)
+        XCTAssertTrue(harness.coordinator.presentation.isWindowVisible)
+        XCTAssertEqual(harness.coordinator.state, .waiting)
+        XCTAssertTrue(harness.coordinator.isQueryInFlight)
+        harness.query.complete(.success(.playing))
+        harness.factory.completeSuccess()
+        harness.coordinator.receiveAudio(.fixtureLive.withGeneration(harness.coordinator.generation))
+        XCTAssertEqual(harness.coordinator.state, .visualizing)
+        XCTAssertEqual(harness.coordinator.activeSessionCount, 1)
+        XCTAssertEqual(queuedPresentations.last?.state, .visualizing)
+    }
+
+    func testLongOcclusionStopsPollingThenRevealChecksImmediately() {
+        let harness = LifecycleHarness()
+        harness.startFollowing()
+        harness.query.complete(.success(.paused))
+        harness.coordinator.setWindowVisible(false)
+        let queries = harness.query.queryCount
+        harness.scheduler.advance(by: 600_000_000_000)
+        XCTAssertEqual(harness.query.queryCount, queries)
+        XCTAssertEqual(harness.coordinator.presentation.playbackChecks.pollingStatus, "Stopped")
+        harness.coordinator.setWindowVisible(true)
+        XCTAssertEqual(harness.query.queryCount, queries + 1)
+        XCTAssertTrue(harness.coordinator.presentation.playbackChecks.isChecking)
+        harness.query.complete(.success(.playing))
+        harness.factory.completeSuccess()
+        XCTAssertEqual(harness.coordinator.activeSessionCount, 1)
+    }
+
+    func testForegroundRecheckCoalescesAndPreservesHealthyCapture() {
+        let harness = LifecycleHarness()
+        harness.startFollowing()
+        harness.query.complete(.success(.paused))
+        let idleQueries = harness.query.queryCount
+        harness.coordinator.refreshPlaybackObservation()
+        harness.coordinator.refreshPlaybackObservation()
+        XCTAssertEqual(harness.query.queryCount, idleQueries + 1)
+        harness.query.complete(.success(.playing))
+        harness.factory.completeSuccess()
+        harness.coordinator.receiveAudio(.fixtureLive.withGeneration(harness.coordinator.generation))
+        let generation = harness.coordinator.generation
+        let activeQueries = harness.query.queryCount
+        harness.coordinator.refreshPlaybackObservation()
+        harness.coordinator.refreshPlaybackObservation()
+        XCTAssertEqual(harness.query.queryCount, activeQueries + 1)
+        harness.query.complete(.success(.playing))
+        XCTAssertEqual(harness.coordinator.generation, generation)
+        XCTAssertEqual(harness.factory.creationCount, 1)
+        XCTAssertEqual(harness.coordinator.activeSessionCount, 1)
+        harness.coordinator.setWindowVisible(false)
+        let hiddenQueries = harness.query.queryCount
+        harness.coordinator.refreshPlaybackObservation()
+        XCTAssertEqual(harness.query.queryCount, hiddenQueries)
+    }
+
+    func testPlaybackCheckDiagnosticsRecordSuccessTimeoutAndCancellation() {
+        let harness = LifecycleHarness()
+        XCTAssertNil(harness.coordinator.presentation.playbackChecks.lastStartedAt)
+        harness.startFollowing()
+        var checks = harness.coordinator.presentation.playbackChecks
+        XCTAssertTrue(checks.isChecking)
+        XCTAssertNotNil(checks.lastStartedAt)
+        XCTAssertNil(checks.lastCompletedAt)
+        harness.query.complete(.success(.paused))
+        checks = harness.coordinator.presentation.playbackChecks
+        XCTAssertFalse(checks.isChecking)
+        XCTAssertNotNil(checks.lastCompletedAt)
+        XCTAssertEqual(checks.lastResult, "paused")
+        XCTAssertEqual(checks.pollingStatus, "Waiting · every 5 seconds")
+        harness.coordinator.refreshPlaybackObservation()
+        harness.scheduler.advance(by: SpaceVisualizerLifecycleCoordinator.playbackQueryTimeoutNanoseconds)
+        XCTAssertEqual(harness.coordinator.presentation.playbackChecks.lastResult, "Timed out")
+        // The fake can still deliver the timed-out callback; it must be ignored.
+        harness.query.complete(.success(.playing))
+        XCTAssertEqual(harness.coordinator.presentation.playbackChecks.lastResult, "Timed out")
+        harness.coordinator.refreshPlaybackObservation()
+        harness.coordinator.setWindowVisible(false)
+        checks = harness.coordinator.presentation.playbackChecks
+        XCTAssertFalse(checks.isChecking)
+        XCTAssertEqual(checks.lastResult, "Canceled by lifecycle transition")
+        XCTAssertEqual(checks.pollingStatus, "Stopped")
+        let report = SpaceVisualizerDiagnosticsExport(appBuild: "test", presentation: harness.coordinator.presentation)
+        XCTAssertEqual(report.playbackChecks, checks)
     }
 
     func testRedundantVisibleEventsDoNotRestartActiveCapture() {
@@ -621,7 +743,10 @@ private final class LifecycleSessionFactoryFake: VisualizerSessionFactory {
     }
 }
 
-private final class LifecycleCaptureFake: CaptureResourceLifecycle {
+private final class LifecycleCaptureFake: CaptureResourceLifecycle, CaptureSessionFactsProviding {
+    let route = AudioRouteFacts(id: "test", name: "Test headphones", kind: .headphones, isActive: true)
+    let format: AudioFormatFacts? = AudioFormatFacts(sampleRate: 48_000, channelCount: 2,
+                                                   isInterleaved: true, sampleFormat: .float32)
     private(set) var starts = 0
     private(set) var stopCount = 0
     private(set) var destroyCount = 0

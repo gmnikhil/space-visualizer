@@ -213,6 +213,7 @@ public struct AudioFeatures: Codable, Equatable, Sendable {
     public var mids: Float
     public var highs: Float
     public var bands: [Float]
+    public var stereoRegions: StereoRegionLevels?
     public var isSilent: Bool
     public var isFresh: Bool
     public var generation: UInt64
@@ -225,6 +226,7 @@ public struct AudioFeatures: Codable, Equatable, Sendable {
         mids: Float,
         highs: Float,
         bands: [Float] = [],
+        stereoRegions: StereoRegionLevels? = nil,
         isSilent: Bool,
         isFresh: Bool,
         generation: UInt64
@@ -236,6 +238,7 @@ public struct AudioFeatures: Codable, Equatable, Sendable {
         self.mids = mids
         self.highs = highs
         self.bands = bands
+        self.stereoRegions = stereoRegions
         self.isSilent = isSilent
         self.isFresh = isFresh
         self.generation = generation
@@ -584,6 +587,12 @@ public final class DiagnosticViewModel: ObservableObject {
         guard let latestFeatures = state.latestFeatures else { return .settled }
         return VisualParameters(features: latestFeatures)
     }
+}
+
+/// Measured facts read on the lifecycle owner queue, not the audio callback.
+public protocol CaptureSessionFactsProviding: AnyObject {
+    var route: AudioRouteFacts { get }
+    var format: AudioFormatFacts? { get }
 }
 
 public protocol CaptureResourceLifecycle: AnyObject {
