@@ -2,7 +2,7 @@
 
 ### A quiet space for Music.
 
-Space Visualizer is a native macOS companion for Apple Music that turns the music playing on your Mac into a live, audio-reactive visual scene. It follows playback automatically, bringing sound into motion while Apple Music remains in charge of listening.
+Space Visualizer is a native macOS companion for Apple Music that turns the music playing on your Mac into a live, audio-reactive visual scene. It brings sound into motion while Apple Music remains in charge of listening.
 
 ## See it in action
 
@@ -12,7 +12,6 @@ Space Visualizer is a native macOS companion for Apple Music that turns the musi
 
 - **Visuals driven by real audio** — the scene responds to the energy and frequency content of Music’s output, rather than a canned animation.
 - **Stereo frequency pairs** — 28 balls cover 14 frequency regions. Each left/right pair shares a region, with height following its own channel. Orange represents bass, mint mids, and purple treble. Positions stay fixed; bass settles more slowly and treble responds more sharply. Mono and unknown multichannel layouts use matching energy on both sides.
-- **Automatic playback following** — follows playback and track changes, settling into a quiet waiting state when Music is paused or stopped.
 - **An immersive canvas** — a spacious visual scene with minimal controls and display-synchronized rendering.
 - **Manual frame-rate control** — choose 30, 60, or 120 FPS under **Visualizer → Frame Rate** in the macOS menu bar to compare smoothness and power usage. Defaults to 60 FPS, remembers your selection, and applies changes immediately. These are caps; actual cadence depends on your display and macOS.
 - **Now-playing details** — available song title, artist, album, and playback position appear alongside the visuals.
@@ -24,14 +23,14 @@ Space Visualizer is a native macOS companion for Apple Music that turns the musi
 
 Space Visualizer requires **macOS 14.2 or later** and the **Music app**. It is a visual companion, not a music player or a streaming service.
 
-Automatic following uses two macOS permissions:
+Space Visualizer uses two macOS permissions:
 
 - **Automation** to read Music’s playback state and track details.
 - **System Audio Recording** to analyze Music’s audio for visualization.
 
-Permission requests begin only after automatic following is enabled. The app does not launch Music or start playback on its own.
+The app does not launch Music or start playback on its own.
 
-Open **Visualizer → Diagnostics…** for the active automatic-following session's signal status, measured route/format, and audio-free report export. Playback alone does not imply capture has started; diagnostics distinguish waiting for input, live audio, silence, and inactive capture. Diagnostics also shows window visibility, the scheduled poller, whether a playback check is in progress, and its last start/completion times and result. These fields are included in exported reports.
+Open **Visualizer → Diagnostics…** for the active session's signal status, measured route/format, and audio-free report export. Playback alone does not imply capture has started; diagnostics distinguish waiting for input, live audio, silence, and inactive capture. Diagnostics also shows window visibility, the scheduled poller, whether a playback check is in progress, and its last start/completion times and result. These fields are included in exported reports.
 
 Fully covered, hidden, and minimized windows suspend work. Revealing the window rechecks playback immediately; bringing an already-visible window to the foreground also requests a check without restarting healthy capture. If recovery ever stalls, open Diagnostics and export a report before restarting the app.
 
@@ -44,7 +43,7 @@ On macOS 14.2 or later, install Xcode Command Line Tools (`xcode-select --instal
 open ".build/Space Visualizer.app"
 ```
 
-The script builds a release app and signs it locally. Once launched, enable automatic following, grant the requested permissions, and play music in Apple Music.
+The script builds a release app and signs it locally. Once launched, play any song in Apple Music and grant the requested permissions.
 
 ## Local by design
 
