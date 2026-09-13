@@ -1,15 +1,24 @@
 import Foundation
 
 public enum DisplayCadencePolicy {
+    public static let supportedFramesPerSecond = [30, 60, 120]
+    public static let defaultFramesPerSecond = 60
     public static let maximumRequestedFramesPerSecond = 120
 
+    public static func validatedFramesPerSecond(_ selection: Int) -> Int {
+        supportedFramesPerSecond.contains(selection) ? selection : defaultFramesPerSecond
+    }
+
     /// Core Animation still selects the actual cadence supported by the
-    /// destination display. A 60 Hz display therefore remains 60 Hz.
-    public static func preferredFramesPerSecond(displayMaximum: Int?) -> Int {
+    /// destination display; the selection is a cap, not a guaranteed rate.
+    public static func preferredFramesPerSecond(
+        displayMaximum: Int?, selection: Int = defaultFramesPerSecond
+    ) -> Int {
+        let requested = validatedFramesPerSecond(selection)
         guard let displayMaximum, displayMaximum > 0 else {
-            return maximumRequestedFramesPerSecond
+            return requested
         }
-        return min(maximumRequestedFramesPerSecond, displayMaximum)
+        return min(requested, displayMaximum)
     }
 }
 

@@ -17,6 +17,7 @@ struct ContentView: View {
     @ObservedObject var automaticFollowing: AutomaticFollowingViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
+    @AppStorage("visualizerFramesPerSecond") private var framesPerSecond = DisplayCadencePolicy.defaultFramesPerSecond
     @State private var showingDiagnostics = false
     @State private var displayTelemetry = DisplayFrameTelemetry()
 
@@ -38,6 +39,7 @@ struct ContentView: View {
                 featuresSource: automaticFollowing.visualFeatures,
                 // Reduce Motion keeps the canvas static; status remains live.
                 active: canvasIsActive && !reduceMotion,
+                framesPerSecond: DisplayCadencePolicy.validatedFramesPerSecond(framesPerSecond),
                 reduceMotion: reduceMotion,
                 telemetry: displayTelemetry
             )
@@ -120,6 +122,19 @@ struct ContentView: View {
             }
             Spacer()
             HStack(spacing: 8) {
+                Picker("Frame rate", selection: Binding(
+                    get: { DisplayCadencePolicy.validatedFramesPerSecond(framesPerSecond) },
+                    set: { framesPerSecond = $0 }
+                )) {
+                    ForEach(DisplayCadencePolicy.supportedFramesPerSecond, id: \.self) { rate in
+                        Text("\(rate) FPS").tag(rate)
+                    }
+                }
+                .pickerStyle(.menu)
+                .fixedSize()
+                .help("Maximum visualizer frame rate. Lower rates reduce rendering work; actual rate depends on your display and macOS.")
+                .accessibilityHint("Choose 30, 60, or 120 frames per second. Lower rates use less rendering power.")
+
                 Button {
                     showingDiagnostics = true
                 } label: {
@@ -346,6 +361,7 @@ struct ContentView: View {
 private struct SpatialCanvasView: View {
     let featuresSource: LatestAudioFeatures
     let active: Bool
+    let framesPerSecond: Int
     let reduceMotion: Bool
     let telemetry: DisplayFrameTelemetry
     @State private var features: AudioFeatures = .settled
@@ -353,7 +369,7 @@ private struct SpatialCanvasView: View {
     var body: some View {
         SpatialArtworkView(features: features, reduceMotion: reduceMotion)
             .overlay(alignment: .topLeading) {
-                DisplayRefreshDriver(active: active, telemetry: telemetry) {
+                DisplayRefreshDriver(active: active, framesPerSecond: framesPerSecond, telemetry: telemetry) {
                     let next = featuresSource.snapshot()
                     if features != next { features = next }
                 }

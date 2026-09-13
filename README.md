@@ -15,6 +15,7 @@ _Click the preview to open the full-quality MP4._
 - **Visuals driven by real audio** — the scene responds to the energy and frequency content of Music’s output, rather than a canned animation.
 - **Automatic playback following** — follows playback and track changes, settling into a quiet waiting state when Music is paused or stopped.
 - **An immersive canvas** — a spacious visual scene with minimal controls and display-synchronized rendering.
+- **Manual frame-rate control** — choose 30, 60, or 120 FPS in the top bar to compare smoothness and power usage. Defaults to 60 FPS, remembers your selection, and applies changes immediately. These are caps; actual cadence depends on your display and macOS.
 - **Now-playing details** — available song title, artist, album, and playback position appear alongside the visuals.
 - **4K image export** — save the current scene as a 3840 × 2160 PNG with available track details, without capturing the screen or recording audio.
 - **Uninterrupted listening** — does not mute Music, change the volume, skip tracks, or take over playback.

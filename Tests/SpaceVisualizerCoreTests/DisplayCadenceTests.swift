@@ -2,11 +2,29 @@ import XCTest
 @testable import SpaceVisualizerCore
 
 final class DisplayCadenceTests: XCTestCase {
-    func testCadenceRequestsUpTo120ButFollowsA60HzDisplay() {
-        XCTAssertEqual(DisplayCadencePolicy.preferredFramesPerSecond(displayMaximum: nil), 120)
-        XCTAssertEqual(DisplayCadencePolicy.preferredFramesPerSecond(displayMaximum: 120), 120)
-        XCTAssertEqual(DisplayCadencePolicy.preferredFramesPerSecond(displayMaximum: 60), 60)
-        XCTAssertEqual(DisplayCadencePolicy.preferredFramesPerSecond(displayMaximum: 30), 30)
+    func testCadenceDefaultsTo60() {
+        XCTAssertEqual(DisplayCadencePolicy.preferredFramesPerSecond(displayMaximum: nil), 60)
+        XCTAssertEqual(DisplayCadencePolicy.preferredFramesPerSecond(displayMaximum: 120), 60)
+    }
+
+    func testManualSelectionsRespectDisplayMaximum() {
+        XCTAssertEqual(DisplayCadencePolicy.supportedFramesPerSecond, [30, 60, 120])
+        for selection in DisplayCadencePolicy.supportedFramesPerSecond {
+            XCTAssertEqual(DisplayCadencePolicy.preferredFramesPerSecond(displayMaximum: nil, selection: selection), selection)
+            for maximum in [24, 30, 60, 120, 144] {
+                XCTAssertEqual(
+                    DisplayCadencePolicy.preferredFramesPerSecond(displayMaximum: maximum, selection: selection),
+                    min(selection, maximum)
+                )
+            }
+        }
+    }
+
+    func testInvalidSavedSelectionFallsBackTo60() {
+        for selection in [-1, 0, 45, 240] {
+            XCTAssertEqual(DisplayCadencePolicy.validatedFramesPerSecond(selection), 60)
+        }
+        XCTAssertEqual(DisplayCadencePolicy.preferredFramesPerSecond(displayMaximum: 0, selection: 120), 120)
     }
 
     func testDiagnosticUpdatesAreCappedAtFourPerSecond() {
