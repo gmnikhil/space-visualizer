@@ -1,20 +1,30 @@
 import SwiftUI
 import SpaceVisualizerCore
 
-private struct ShowVisualizerDiagnosticsKey: FocusedValueKey {
-    typealias Value = () -> Void
+// A stable, window-owned command target rather than new closures on every
+// playback update. ContentView observes requests; the scene does not.
+final class VisualizerMenuActions: ObservableObject {
+    @Published var isPresented = false
+    @Published private(set) var imageExportRequest = 0
+
+    func show() { isPresented = true }
+    func exportImage() { imageExportRequest += 1 }
+}
+
+private struct VisualizerMenuActionsKey: FocusedValueKey {
+    typealias Value = VisualizerMenuActions
 }
 
 extension FocusedValues {
-    var showVisualizerDiagnostics: (() -> Void)? {
-        get { self[ShowVisualizerDiagnosticsKey.self] }
-        set { self[ShowVisualizerDiagnosticsKey.self] = newValue }
+    var visualizerMenuActions: VisualizerMenuActions? {
+        get { self[VisualizerMenuActionsKey.self] }
+        set { self[VisualizerMenuActionsKey.self] = newValue }
     }
 }
 
 struct VisualizerCommands: Commands {
     @AppStorage("visualizerFramesPerSecond") private var framesPerSecond = DisplayCadencePolicy.defaultFramesPerSecond
-    @FocusedValue(\.showVisualizerDiagnostics) private var showDiagnostics
+    @FocusedValue(\.visualizerMenuActions) private var menuActions
 
     var body: some Commands {
         CommandMenu("Visualizer") {
@@ -27,8 +37,11 @@ struct VisualizerCommands: Commands {
                 }
             }
             Divider()
-            Button("Diagnostics…") { showDiagnostics?() }
-                .disabled(showDiagnostics == nil)
+            Button("Export Image…") { menuActions?.exportImage() }
+                .disabled(menuActions == nil)
+                .accessibilityHint("Exports the current spatial scene as a 4K PNG image")
+            Button("Diagnostics…") { menuActions?.show() }
+                .disabled(menuActions == nil)
         }
     }
 }

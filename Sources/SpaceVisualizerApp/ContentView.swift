@@ -17,7 +17,7 @@ struct ContentView: View {
     @ObservedObject var automaticFollowing: AutomaticFollowingViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("visualizerFramesPerSecond") private var framesPerSecond = DisplayCadencePolicy.defaultFramesPerSecond
-    @State private var showingDiagnostics = false
+    @StateObject private var menuActions = VisualizerMenuActions()
     @State private var displayTelemetry = DisplayFrameTelemetry()
 
     private static let exportImageSize = CGSize(width: 3_840, height: 2_160)
@@ -81,8 +81,11 @@ struct ContentView: View {
             .opacity(0.001)
             .accessibilityHidden(true)
         }
-        .focusedSceneValue(\.showVisualizerDiagnostics, { showingDiagnostics = true })
-        .sheet(isPresented: $showingDiagnostics) {
+        .focusedSceneValue(\.visualizerMenuActions, menuActions)
+        .onChange(of: menuActions.imageExportRequest) { _, _ in
+            exportCurrentImage()
+        }
+        .sheet(isPresented: $menuActions.isPresented) {
             DiagnosticsPanel(
                 engine: engine,
                 automaticFollowing: automaticFollowing,
@@ -115,15 +118,6 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            HStack(spacing: 8) {
-                Button {
-                    exportCurrentImage()
-                } label: {
-                    Label("Export image", systemImage: "photo")
-                }
-                .buttonStyle(.bordered)
-                .accessibilityHint("Exports the current spatial scene as a 4K PNG image")
-            }
         }
     }
 
