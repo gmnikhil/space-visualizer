@@ -60,6 +60,47 @@ final class LifecycleCoordinatorTests: XCTestCase {
         XCTAssertTrue(harness.coordinator.hasActiveWatchdog)
     }
 
+    func testLiveStatusWaitsForFiveSecondsOfContinuousSilence() {
+        let harness = LifecycleHarness()
+        harness.startFollowing()
+        harness.query.complete(.success(.playing))
+        harness.factory.completeSuccess()
+        let generation = harness.coordinator.generation
+        harness.coordinator.receiveAudio(.fixtureLive.withGeneration(generation))
+        harness.coordinator.receiveAudio(.fixtureSilent.withGeneration(generation))
+        XCTAssertEqual(harness.coordinator.state, .visualizing)
+
+        harness.scheduler.advance(by: 4_999_999_999)
+        harness.coordinator.receiveAudio(.fixtureSilent.withGeneration(generation))
+        XCTAssertEqual(harness.coordinator.state, .visualizing)
+        harness.scheduler.advance(by: 1)
+        harness.coordinator.receiveAudio(.fixtureSilent.withGeneration(generation))
+        XCTAssertEqual(harness.coordinator.state, .silent)
+        XCTAssertEqual(harness.coordinator.activeSessionCount, 1)
+
+        harness.coordinator.receiveAudio(.fixtureLive.withGeneration(generation))
+        XCTAssertEqual(harness.coordinator.state, .visualizing)
+    }
+
+    func testAudioReturningResetsSilenceGracePeriod() {
+        let harness = LifecycleHarness()
+        harness.startFollowing()
+        harness.query.complete(.success(.playing))
+        harness.factory.completeSuccess()
+        let generation = harness.coordinator.generation
+        harness.coordinator.receiveAudio(.fixtureLive.withGeneration(generation))
+        harness.coordinator.receiveAudio(.fixtureSilent.withGeneration(generation))
+        harness.scheduler.advance(by: 3_000_000_000)
+        harness.coordinator.receiveAudio(.fixtureLive.withGeneration(generation))
+        harness.coordinator.receiveAudio(.fixtureSilent.withGeneration(generation))
+        harness.scheduler.advance(by: 2_000_000_000)
+        harness.coordinator.receiveAudio(.fixtureSilent.withGeneration(generation))
+        XCTAssertEqual(harness.coordinator.state, .visualizing)
+
+        harness.coordinator.setWindowVisible(false)
+        XCTAssertEqual(harness.coordinator.state, .suspended)
+    }
+
     func testDiagnosticsUsesActiveSessionFactsAndClearsThemAfterTeardown() {
         let harness = LifecycleHarness()
         harness.startFollowing()
@@ -77,6 +118,9 @@ final class LifecycleCoordinatorTests: XCTestCase {
         XCTAssertEqual(report.captureFormat, live.captureFormat)
         XCTAssertEqual(report.captureSignal, live.captureSignalLabel)
         XCTAssertNil(report.legacyReport)
+        harness.coordinator.receiveAudio(.fixtureSilent.withGeneration(harness.coordinator.generation))
+        XCTAssertEqual(harness.coordinator.presentation.captureSignalLabel, "Live measured audio")
+        harness.scheduler.advance(by: 5_000_000_000)
         harness.coordinator.receiveAudio(.fixtureSilent.withGeneration(harness.coordinator.generation))
         XCTAssertEqual(harness.coordinator.presentation.captureSignalLabel, "Captured silence")
         harness.coordinator.setWindowVisible(false)

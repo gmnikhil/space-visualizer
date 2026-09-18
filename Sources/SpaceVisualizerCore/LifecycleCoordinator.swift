@@ -493,6 +493,8 @@ public final class SpaceVisualizerLifecycleCoordinator {
     private var noInputTeardownTimer: LifecycleCancellationToken?
     private var hasReceivedFreshInput = false
     private var latestAudioFeatures: AudioFeatures = .settled
+    private var silenceStartedAt: UInt64?
+    private static let liveSilenceGraceNanoseconds: UInt64 = 5_000_000_000
     private var lastNotifiedPresentation: LifecyclePresentation?
 
     public init(
@@ -695,9 +697,18 @@ public final class SpaceVisualizerLifecycleCoordinator {
         hasReceivedFreshInput = true
         cancelNoInputDeadlines()
         if features.isSilent {
+            // Keep the status live through brief beat drops, while still
+            // forwarding real silent features so the scene can settle.
+            if state == .visualizing {
+                let now = scheduler.nowNanoseconds
+                let startedAt = silenceStartedAt ?? now
+                silenceStartedAt = startedAt
+                guard now - startedAt >= Self.liveSilenceGraceNanoseconds else { return }
+            }
             state = .silent
             message = "Music is playing, but the latest audio is quiet."
         } else {
+            silenceStartedAt = nil
             state = .visualizing
             // The LIVE badge already communicates this state; reserve the
             // message line for actionable or more specific information.
@@ -713,6 +724,7 @@ public final class SpaceVisualizerLifecycleCoordinator {
             latestAudioFeatures = .settled
             audioFeaturesDidChange?(.settled)
         }
+        silenceStartedAt = nil
         state = .recovering
         message = "Fresh Music audio expired. Waiting for input without changing playback."
         scheduleNoInputDeadlines(for: generation)
@@ -1093,6 +1105,7 @@ public final class SpaceVisualizerLifecycleCoordinator {
     }
 
     private func cancelRuntime(invalidateGeneration: Bool) {
+        silenceStartedAt = nil
         idleTimer?.cancel()
         idleTimer = nil
         activeWatchdog?.cancel()
