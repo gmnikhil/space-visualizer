@@ -714,7 +714,6 @@ public final class SpaceVisualizerLifecycleCoordinator {
             // message line for actionable or more specific information.
             message = ""
         }
-        if consecutivePlaybackFailures > 0 { message = playbackFailureMessage }
     }
 
     private func handleExpiredAudioInput() {
@@ -899,11 +898,9 @@ public final class SpaceVisualizerLifecycleCoordinator {
         if isActiveObservation {
             if consecutivePlaybackFailures >= Self.playbackFailureThreshold {
                 returnToWaiting(message: playbackFailureMessage)
-            } else {
-                // Keep the existing capture and watchdog through transient
-                // observation failures. PCM is not proof of playback state.
-                message = playbackFailureMessage
             }
+            // Keep the existing capture, status, and watchdog through transient
+            // observation failures. The check result remains in diagnostics.
         } else {
             state = .waiting
             message = playbackFailureMessage

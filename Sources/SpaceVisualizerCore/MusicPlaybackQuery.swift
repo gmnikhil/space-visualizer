@@ -167,7 +167,9 @@ public final class MusicPlaybackQueryAdapter: PlaybackStateQuerying {
                 case let .success(output):
                     let state = Self.playbackState(output)
                     guard state != .unknown else {
-                        gate.complete(.failed("Music returned an unreadable playback state, even without track metadata."))
+                        // Only include the state-only response, never track metadata.
+                        let response = String(output.prefix(160)).debugDescription
+                        gate.complete(.failed("Music returned an unreadable playback state, even without track metadata. Response: \(response)"))
                         return
                     }
                     gate.complete(.success(PlaybackObservation(state: state)))
@@ -285,35 +287,33 @@ public final class BoundedAppleScriptRunner: BoundedAppleScriptRunning {
     ) -> LifecycleCancellationToken {
         let token = LifecycleCancellationToken()
         let execution = ProcessExecution(
-            token: token,
             fixedScript: fixedScript,
             timeout: max(0.001, timeout),
             outputLimit: outputLimit,
             completion: completion
         )
-        token.addCancellationHandler { execution.cancel() }
+        // The queued launch and exit waiter own the execution. Cancellation
+        // must not form a cycle through the execution's completion closure.
+        token.addCancellationHandler { [weak execution] in execution?.cancel() }
         launchQueue.async { execution.start(timeoutQueue: self.timeoutQueue) }
         return token
     }
 
     private final class ProcessExecution {
         private let lock = NSLock()
-        private let token: LifecycleCancellationToken
         private let fixedScript: String
         private let timeout: TimeInterval
         private let outputLimit: Int
-        private let completion: (Result<String, AppleScriptRunnerError>) -> Void
+        private var completion: ((Result<String, AppleScriptRunnerError>) -> Void)?
         private var process: Process?
         private var didFinish = false
 
         init(
-            token: LifecycleCancellationToken,
             fixedScript: String,
             timeout: TimeInterval,
             outputLimit: Int,
             completion: @escaping (Result<String, AppleScriptRunnerError>) -> Void
         ) {
-            self.token = token
             self.fixedScript = fixedScript
             self.timeout = timeout
             self.outputLimit = outputLimit
@@ -321,7 +321,6 @@ public final class BoundedAppleScriptRunner: BoundedAppleScriptRunning {
         }
 
         func start(timeoutQueue: DispatchQueue) {
-            guard !token.isCancelled else { return }
             let process = Process()
             let stdout = Pipe()
             let stderr = Pipe()
@@ -331,14 +330,18 @@ public final class BoundedAppleScriptRunner: BoundedAppleScriptRunning {
             process.standardError = stderr
 
             lock.lock()
+            guard !didFinish else {
+                lock.unlock()
+                return
+            }
             self.process = process
-            let canceledBeforeLaunch = token.isCancelled
-            lock.unlock()
-            guard !canceledBeforeLaunch else { return }
-
+            // Serialize launch with cancellation so a canceled request cannot
+            // start a helper after cancellation has already completed.
             do {
                 try process.run()
+                lock.unlock()
             } catch {
+                lock.unlock()
                 finish(.failure(.failed(error.localizedDescription)))
                 return
             }
@@ -360,25 +363,19 @@ public final class BoundedAppleScriptRunner: BoundedAppleScriptRunning {
                 errors.set(Self.readBounded(stderr.fileHandleForReading, limit: self.outputLimit))
                 group.leave()
             }
-            DispatchQueue.global(qos: .utility).async { [weak self] in
+            DispatchQueue.global(qos: .utility).async {
                 process.waitUntilExit()
                 group.wait()
-                self?.processExited(process, output: output.value, errors: errors.value)
+                self.processExited(process, output: output.value, errors: errors.value)
             }
         }
 
         func cancel() {
-            lock.lock()
-            if process?.isRunning == true { process?.terminate() }
-            lock.unlock()
-            finish(.failure(.canceled))
+            finish(.failure(.canceled), terminateProcess: true)
         }
 
         private func timeOut() {
-            lock.lock()
-            if process?.isRunning == true { process?.terminate() }
-            lock.unlock()
-            finish(.failure(.timedOut))
+            finish(.failure(.timedOut), terminateProcess: true)
         }
 
         private func processExited(_ process: Process, output: Data, errors: Data) {
@@ -403,15 +400,19 @@ public final class BoundedAppleScriptRunner: BoundedAppleScriptRunning {
             finish(.success(string))
         }
 
-        private func finish(_ result: Result<String, AppleScriptRunnerError>) {
+        private func finish(_ result: Result<String, AppleScriptRunnerError>, terminateProcess: Bool = false) {
             lock.lock()
             guard !didFinish else {
                 lock.unlock()
                 return
             }
             didFinish = true
+            if terminateProcess, process?.isRunning == true { process?.terminate() }
+            process = nil
+            let callback = completion
+            completion = nil
             lock.unlock()
-            completion(result)
+            callback?(result)
         }
 
         private final class DataBox {

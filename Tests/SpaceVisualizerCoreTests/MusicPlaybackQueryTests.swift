@@ -120,7 +120,7 @@ final class MusicPlaybackQueryTests: XCTestCase {
         )
         let received = expectation(description: "Both responses invalid")
         _ = query.query {
-            XCTAssertEqual($0, .failed("Music returned an unreadable playback state, even without track metadata."))
+            XCTAssertEqual($0, .failed("Music returned an unreadable playback state, even without track metadata. Response: \"not a playback state\""))
             received.fulfill()
         }
         waitForRunner(runner)
@@ -129,6 +129,55 @@ final class MusicPlaybackQueryTests: XCTestCase {
         runner.complete(.success("not a playback state"))
         wait(for: [received], timeout: 1)
         XCTAssertEqual(runner.runCount, 2)
+    }
+
+    func testUnreadableStateDiagnosticIsBoundedAndExcludesMetadata() {
+        let runner = FakeAppleScriptRunner()
+        let query = MusicPlaybackQueryAdapter(
+            presence: FakeMusicProcessPresence(isRunning: true), runner: runner
+        )
+        let received = expectation(description: "Bounded state diagnostic")
+        let stateOutput = "\n" + String(repeating: "x", count: 300)
+        _ = query.query {
+            XCTAssertEqual($0, .failed(
+                "Music returned an unreadable playback state, even without track metadata. Response: " +
+                String(stateOutput.prefix(160)).debugDescription
+            ))
+            received.fulfill()
+        }
+        waitForRunner(runner)
+        runner.complete(.success("unknown\u{1F}private track metadata"))
+        waitForRunner(runner)
+        runner.complete(.success(stateOutput))
+        wait(for: [received], timeout: 1)
+    }
+
+    func testQueryRecoversAfterAnUnreadableFallbackWithoutRecreatingAdapter() {
+        let runner = FakeAppleScriptRunner()
+        let query = MusicPlaybackQueryAdapter(
+            presence: FakeMusicProcessPresence(isRunning: true), runner: runner
+        )
+        let failed = expectation(description: "Unreadable fallback")
+        _ = query.query {
+            guard case .failed = $0 else { return XCTFail("Expected failure") }
+            failed.fulfill()
+        }
+        waitForRunner(runner)
+        runner.complete(.success("bad response"))
+        waitForRunner(runner)
+        runner.complete(.success("unknown"))
+        wait(for: [failed], timeout: 1)
+
+        let recovered = expectation(description: "Next poll recovers")
+        _ = query.query {
+            guard case let .success(observation) = $0 else { return XCTFail("Expected recovery") }
+            XCTAssertEqual(observation.state, .playing)
+            recovered.fulfill()
+        }
+        waitForRunner(runner)
+        runner.complete(.success("playing\u{1F}\u{1F}\u{1F}\u{1F}\u{1F}\u{1F}"))
+        wait(for: [recovered], timeout: 1)
+        XCTAssertEqual(runner.runCount, 3)
     }
 
     func testFallbackReportsPausedInsteadOfAssumingPlaying() {
