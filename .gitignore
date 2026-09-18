@@ -21,3 +21,4 @@ scripts/inspect-coreaudio-sdk.sh
 
 # Local recordings
 videos/space_visualizer.mov
+space-visualizer-diagnostic-report.json
