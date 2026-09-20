@@ -152,7 +152,7 @@ struct ContentView: View {
         }
         .padding(16)
         .frame(maxWidth: 780)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .background(Color.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
                 .stroke(statusColor(for: presentation.state).opacity(0.35), lineWidth: 1)
