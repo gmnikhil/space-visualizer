@@ -23,7 +23,7 @@ enum SpatialStage {
     static func draw(context: GraphicsContext, size: CGSize, features: AudioFeatures, reduceMotion: Bool) {
         let colors: [Color] = [.orange, .mint, .purple]
         let floor = floorGeometry.applying(CGAffineTransform(scaleX: size.width, y: size.height))
-        context.stroke(floor, with: .color(.mint.opacity(0.07)), lineWidth: 0.7)
+        context.stroke(floor, with: .color(.mint.opacity(0)), lineWidth: 0.7)
 
         for ball in SpatialScene.balls(features: features, reduceMotion: reduceMotion) {
             let center = CGPoint(x: size.width * (0.5 + CGFloat(ball.x) * 0.5),
